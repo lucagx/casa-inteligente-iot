@@ -1,0 +1,289 @@
+/*
+ * Casa Inteligente 3D — servidor
+ * ------------------------------------------------------------------
+ * Ponte em tempo real entre o ESP32-S3 (via Blynk Cloud) e a casa 3D.
+ *
+ *   ESP32-S3 ── Wi-Fi ──> Blynk Cloud <── HTTP ── este servidor ── SSE ──> navegador (3D)
+ *
+ * MODO AO VIVO     : BLYNK_TOKEN configurado no .env. O servidor lê os pinos
+ *                    virtuais do seu dispositivo e envia cada mudança para a
+ *                    página na hora (Server-Sent Events). Comandos da página
+ *                    vão para o Blynk, que repassa ao ESP32.
+ * MODO DEMONSTRAÇÃO: sem token (ou DEMO=true). O servidor simula os sensores
+ *                    e aplica exatamente as mesmas regras do firmware, para
+ *                    apresentar mesmo sem a placa.
+ */
+
+require("dotenv").config({ quiet: true });
+const express = require("express");
+const path = require("path");
+
+const PORT = Number(process.env.PORT || 3000);
+const TOKEN = (process.env.BLYNK_TOKEN || "").trim();
+const SERVER = (process.env.BLYNK_SERVER || "blynk.cloud").trim();
+const POLL_MS = Math.max(800, Number(process.env.POLL_INTERVAL_MS || 1200));
+const HAS_TOKEN = TOKEN && !TOKEN.startsWith("cole_aqui");
+const MODE = process.env.DEMO === "true" || !HAS_TOKEN ? "demo" : "live";
+
+// Pinos virtuais (os mesmos do firmware)
+const PINS = ["V0", "V1", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11"];
+const WRITABLE = new Set(["V0", "V1", "V2", "V3", "V9"]);
+
+// Limiares idênticos ao firmware
+const TEMP_ABRIR = 30.0;
+const TEMP_FECHAR = 27.0;
+const LUZ_ESCURO_PCT = 35; // ~1500/4095 no ADC do ESP32-S3
+const ALARME_MS = 4000;
+
+const app = express();
+app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
+// three.js e fontes servidos localmente: a apresentação funciona sem internet
+// (só o Blynk precisa de internet, no modo ao vivo)
+app.use("/vendor/three", express.static(path.join(__dirname, "node_modules/three")));
+app.use("/vendor/fonts", express.static(path.join(__dirname, "node_modules/@fontsource")));
+
+// ------------------------------------------------------------------
+// Estado compartilhado
+// ------------------------------------------------------------------
+let state = {
+  mode: MODE,
+  blynkOnline: false,
+  deviceOnline: false,
+  error: null,
+  ts: Date.now(),
+  // no modo ao vivo começa vazio: a página mostra "--" até a primeira leitura real
+  values: MODE === "live" ? {} : {
+    V0: "0", V1: "0", V3: "1", V4: "24.0", V5: "58", V6: "CLARO",
+    V7: "FECHADA", V8: "DESARMADO", V9: "0", V10: "72", V11: "0",
+  },
+};
+
+const clients = new Set();
+
+function broadcast() {
+  state.ts = Date.now();
+  const payload = `event: state\ndata: ${JSON.stringify(state)}\n\n`;
+  for (const res of clients) res.write(payload);
+}
+
+function setValues(patch) {
+  let changed = false;
+  for (const [k, v] of Object.entries(patch)) {
+    const s = String(v);
+    if (state.values[k] !== s) {
+      state.values[k] = s;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+// ------------------------------------------------------------------
+// MODO AO VIVO — Blynk Cloud
+// ------------------------------------------------------------------
+const base = `https://${SERVER}/external/api`;
+
+async function blynkGet(pins) {
+  const url = `${base}/get?token=${encodeURIComponent(TOKEN)}&${pins.join("&")}`;
+  const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
+  const text = await r.text();
+  if (!r.ok) throw new Error(`Blynk ${r.status}: ${text.slice(0, 120)}`);
+  let data;
+  try { data = JSON.parse(text); } catch { data = text; }
+
+  const out = {};
+  if (pins.length === 1) {
+    out[pins[0]] = Array.isArray(data) ? data[0] : data;
+  } else if (data && typeof data === "object" && !Array.isArray(data)) {
+    for (const [k, v] of Object.entries(data)) out[k.toUpperCase()] = Array.isArray(v) ? v[0] : v;
+  } else if (Array.isArray(data)) {
+    pins.forEach((p, i) => (out[p] = data[i]));
+  }
+  return out;
+}
+
+async function pollBlynk() {
+  try {
+    let vals;
+    try {
+      vals = await blynkGet(PINS);
+    } catch (e) {
+      // alguns servidores não aceitam leitura múltipla: lê pino a pino
+      vals = {};
+      for (const p of PINS) {
+        try { Object.assign(vals, await blynkGet([p])); } catch { /* pino sem datastream */ }
+      }
+      if (!Object.keys(vals).length) throw e;
+    }
+    const changed = setValues(vals);
+    const wasOnline = state.blynkOnline;
+    state.blynkOnline = true;
+    state.error = null;
+    if (changed || !wasOnline) broadcast();
+  } catch (err) {
+    if (state.blynkOnline || state.error !== err.message) {
+      state.blynkOnline = false;
+      state.error = err.message;
+      broadcast();
+    }
+  }
+}
+
+async function pollDevice() {
+  try {
+    const r = await fetch(`${base}/isHardwareConnected?token=${encodeURIComponent(TOKEN)}`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    const online = (await r.text()).trim() === "true";
+    if (online !== state.deviceOnline) {
+      state.deviceOnline = online;
+      broadcast();
+    }
+  } catch { /* mantém último estado */ }
+}
+
+async function blynkUpdate(pin, value) {
+  const url = `${base}/update?token=${encodeURIComponent(TOKEN)}&${pin}=${encodeURIComponent(value)}`;
+  const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
+  if (!r.ok) throw new Error(`Blynk ${r.status}: ${(await r.text()).slice(0, 120)}`);
+}
+
+// ------------------------------------------------------------------
+// MODO DEMONSTRAÇÃO — mesmas regras do firmware
+// ------------------------------------------------------------------
+const sim = { temp: 24, umid: 58, luz: 72, presenca: false, alarmeAte: 0 };
+
+function simTick() {
+  const v = state.values;
+  const auto = v.V3 === "1";
+  const armado = v.V9 === "1";
+  const patch = {
+    V4: sim.temp.toFixed(1),
+    V5: Math.round(sim.umid),
+    V10: Math.round(sim.luz),
+    V6: sim.luz < LUZ_ESCURO_PCT ? "ESCURO" : "CLARO",
+    V11: sim.presenca ? 1 : 0,
+  };
+
+  if (auto) {
+    if (sim.temp >= TEMP_ABRIR && v.V7 === "FECHADA") patch.V7 = "ABERTA";
+    else if (sim.temp <= TEMP_FECHAR && v.V7 === "ABERTA") patch.V7 = "FECHADA";
+    patch.V0 = sim.luz < LUZ_ESCURO_PCT ? 1 : 0;
+  }
+
+  const now = Date.now();
+  if (armado && sim.presenca && now > sim.alarmeAte) sim.alarmeAte = now + ALARME_MS;
+  if (now < sim.alarmeAte && armado) patch.V8 = "ALARME ATIVO";
+  else patch.V8 = armado ? "ARMADO" : "DESARMADO";
+
+  if (setValues(patch)) broadcast();
+}
+
+function simCommand(pin, value) {
+  const v = state.values;
+  const on = String(value) === "1";
+  const manual = v.V3 === "0";
+  if (pin === "V3") setValues({ V3: on ? 1 : 0 });
+  if (pin === "V9") {
+    setValues({ V9: on ? 1 : 0 });
+    if (!on) sim.alarmeAte = 0;
+  }
+  // assim como no firmware: comandos de atuador só valem no modo manual
+  if (manual && pin === "V0") setValues({ V0: on ? 1 : 0 });
+  if (manual && pin === "V1") setValues({ V1: on ? 1 : 0 });
+  if (manual && pin === "V2") setValues({ V7: on ? "ABERTA" : "FECHADA" });
+  simTick();
+  broadcast();
+}
+
+// ------------------------------------------------------------------
+// Rotas
+// ------------------------------------------------------------------
+app.get("/api/state", (_req, res) => res.json(state));
+
+app.get("/api/stream", (req, res) => {
+  res.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders();
+  res.write(`retry: 2000\nevent: state\ndata: ${JSON.stringify(state)}\n\n`);
+  clients.add(res);
+  const ping = setInterval(() => res.write(`: ping\n\n`), 15000);
+  req.on("close", () => {
+    clearInterval(ping);
+    clients.delete(res);
+  });
+});
+
+app.post("/api/command", async (req, res) => {
+  const { pin, value } = req.body || {};
+  if (!WRITABLE.has(pin)) return res.status(400).json({ ok: false, error: `Pino ${pin} não aceita comando.` });
+  try {
+    if (MODE === "demo") {
+      simCommand(pin, value);
+    } else {
+      await blynkUpdate(pin, value);
+      // reflete na hora; a próxima leitura do Blynk confirma o valor real
+      if (pin === "V2") setValues({ V7: String(value) === "1" ? "ABERTA" : "FECHADA" });
+      else setValues({ [pin]: value });
+      broadcast();
+      setTimeout(pollBlynk, 400);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
+// Controles de sensores simulados (apenas no modo demonstração)
+app.post("/api/sim", (req, res) => {
+  if (MODE !== "demo") return res.status(409).json({ ok: false, error: "Disponível só no modo demonstração." });
+  const { temp, luz, umid, presenca } = req.body || {};
+  if (temp !== undefined) sim.temp = Math.min(50, Math.max(0, Number(temp)));
+  if (luz !== undefined) sim.luz = Math.min(100, Math.max(0, Number(luz)));
+  if (umid !== undefined) sim.umid = Math.min(100, Math.max(0, Number(umid)));
+  if (presenca !== undefined) sim.presenca = !!presenca;
+  simTick();
+  res.json({ ok: true });
+});
+
+// ------------------------------------------------------------------
+// Início
+// ------------------------------------------------------------------
+if (MODE === "live") {
+  // só consulta o Blynk enquanto houver alguém com a página aberta,
+  // para economizar a cota de requisições do plano gratuito
+  setInterval(() => clients.size && pollBlynk(), POLL_MS);
+  setInterval(() => clients.size && pollDevice(), 5000);
+  pollBlynk();
+  pollDevice();
+} else {
+  state.blynkOnline = false;
+  state.deviceOnline = true; // o "dispositivo" simulado está sempre ligado
+  setInterval(() => {
+    // leve variação natural da umidade para dar vida aos números
+    sim.umid += (Math.random() - 0.5) * 0.6;
+    sim.umid = Math.min(75, Math.max(40, sim.umid));
+    simTick();
+  }, 1000);
+}
+
+// batimento: mantém a página informada de que o elo está vivo
+setInterval(() => clients.size && broadcast(), 3000);
+
+app.listen(PORT, "0.0.0.0", () => {
+  const os = require("os");
+  const ips = Object.values(os.networkInterfaces())
+    .flat()
+    .filter((i) => i && i.family === "IPv4" && !i.internal)
+    .map((i) => i.address);
+  console.log("\n  Casa Inteligente 3D");
+  console.log(`  Modo: ${MODE === "live" ? `AO VIVO (Blynk: ${SERVER})` : "DEMONSTRAÇÃO (sensores simulados)"}`);
+  console.log(`  Neste computador: http://localhost:${PORT}`);
+  ips.forEach((ip) => console.log(`  No celular (mesmo Wi-Fi): http://${ip}:${PORT}`));
+  console.log("");
+});
