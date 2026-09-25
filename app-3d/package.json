@@ -1,0 +1,20 @@
+{
+  "name": "casa-inteligente-3d",
+  "version": "2.0.0",
+  "description": "Gêmeo digital 3D da Mini Casa Inteligente (ESP32-S3 + Blynk) com sincronização em tempo real.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@fontsource/dm-sans": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/unbounded": "^5.3.0",
+    "dotenv": "^18.0.3",
+    "express": "^5.2.1",
+    "three": "^0.186.1"
+  }
+}
