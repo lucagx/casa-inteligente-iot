@@ -1,0 +1,5 @@
+# Bibliotecas do projeto (o Wokwi instala automaticamente)
+Blynk
+DHT sensor library
+Adafruit Unified Sensor
+ESP32Servo
