@@ -6,7 +6,7 @@ em tempo real por um gêmeo digital 3D.
 
 ```
 app-3d/      Casa 3D + servidor ponte com o Blynk (Node.js, three.js)
-firmware/    Código do ESP32-S3 (o mesmo arquivo serve para Wokwi e placa real)
+firmware/    Código do ESP32-S3 em uso (a adicionar)
 wokwi/       diagram.json e libraries.txt do simulador
 docs/        Relatório, documento inicial, guia de testes, capturas de tela
 ```
