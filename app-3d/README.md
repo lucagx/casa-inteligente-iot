@@ -17,9 +17,9 @@ Protoboard (sensores/atuadores)
 |---|---|---|---|
 | LED (iluminação) | D1 | V0 | Luzes da sala, cozinha, quarto, spots do beiral, jardim e piscina |
 | LED (trava da porta) | D0 | V1 | Porta abre/fecha e o LED da fechadura fica verde/vermelho |
-| Servo SG90 | D7 | V2 (comando) / V7 (status) | Janela da parede leste gira 0° ↔ 90°, como o servo |
+| Servo SG90 | D7 | V2 (comando) / V7 (status) | 4 janelas abrem juntas: leste e norte (giram ~82°) e 2 basculantes na faixa de vidro do andar de cima |
 | DHT11 | D2 | V4 / V5 | Caixa azul na parede leste; temperatura e umidade no painel e na TV da sala |
-| LDR | A0 | V6 / V10 | Céu muda de dia → entardecer → noite conforme a luz real |
+| LDR | A0 | V6 / V10 | Céu muda de dia → entardecer → noite conforme a luz real (modo de céu "LDR") |
 | PIR HC-SR501 | D5 | V11 | Sensor ao lado da porta, cone de detecção e holograma de uma pessoa na entrada |
 | HC-SR04 | D4 (TRIG) / D6 (ECHO) | V12 | Poste no fundo da garagem: o carro anda até a distância medida e a barra de LEDs fica verde/âmbar/vermelha |
 | Buzzer | D8 | V8 / V9 | Sirene vermelha pisca e varre o jardim com luz |
@@ -68,7 +68,45 @@ regras do firmware (incluindo a distância do carro na garagem). Serve de plano 
   3. Aproxime um carrinho (ou a mão) do HC-SR04 → o carro entra na garagem e a barra muda de cor.
   4. Arme o alarme (botão D3 ou painel) e passe a mão no PIR → holograma, sirene e buzzer.
   5. Troque para Manual e acenda a luz pelo celular → o LED do D1 acende.
-- `?q=high` ou `?q=low` na URL força a qualidade gráfica.
+
+### Layouts da tela (botões ao lado das câmeras ou teclas 1, 2, 3)
+
+| Layout | Para quê |
+|---|---|
+| **Painel** (1) | Painel completo. Arraste pelo cabeçalho para mover; solte na borda esquerda/direita para encaixar, no meio fica flutuando. ⇆ troca de lado, – minimiza, duplo clique volta para a direita |
+| **Compacto** (2) | Faixa no canto com todas as leituras e botões rápidos (AUTO/MANUAL, luz, porta, janela, alarme) |
+| **Foco** (3) | Apresentação: só a casa, a faixa e as câmeras; o nome de cada componente fica sempre visível |
+
+A lista de eventos pode ser recolhida (botão "Eventos"). A câmera centraliza a casa na área livre
+da tela e acompanha quando o painel abre, fecha ou muda de lado. O layout escolhido fica salvo.
+
+### Céu (seção "Céu" no painel)
+
+- **LDR** (padrão): segue o sensor de luz da placa.
+- **Relógio**: segue a hora do computador; o sol nasce a leste e se põe a oeste.
+- **Manual**: escolha a hora no controle deslizante.
+
+Só muda a visualização: a regra da luz no firmware continua usando o LDR.
+
+### Qualidade gráfica
+
+O botão de qualidade no fim do painel mostra o perfil e o **FPS** atual, e alterna
+automática → alta → média → leve.
+
+| Perfil | Quando | O que usa |
+|---|---|---|
+| **Alta** | Placa de vídeo dedicada (NVIDIA, Radeon RX, Apple M) | Oclusão de ambiente, bloom, MSAA 4×, sombra 4096, luzes externas reais |
+| **Média** | Vídeo integrado recente (Intel UHD/Iris Xe, Radeon integrada) | Bloom, MSAA 4×, sombra 2048 |
+| **Leve** | Intel HD antiga, celular ou software | FXAA, sombra 2048, resolução 0,85×, 30 FPS |
+
+No modo automático o perfil é escolhido pela placa de vídeo e **cai sozinho** se o FPS ficar
+abaixo de 30 (a escolha fica salva). `?q=high`, `?q=medium` ou `?q=low` na URL forçam um perfil.
+
+Otimizações que valem para todos os perfis: as ~520 peças fixas da casa são juntadas em 72
+(≈ 210–260 chamadas de desenho por quadro, antes eram 4.201); a sombra só é recalculada quando o
+sol muda ou porta/janela/carro se movem; nenhuma luz pontual projeta sombra; os materiais são
+compilados na tela de carregamento. Uma proteção no pós-processamento impede que um pixel
+inválido (NaN) se espalhe pelo bloom — era a causa da tela preta quando o alarme disparava.
 
 ## Observações
 
