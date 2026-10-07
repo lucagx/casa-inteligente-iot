@@ -1020,7 +1020,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
       void main(){ vec4 wp = modelMatrix*vec4(position,1.); vY = wp.y; vN = normalize(normalMatrix*normal);
         vec4 mv = viewMatrix*wp; vV = normalize(-mv.xyz); gl_Position = projectionMatrix*mv; }`,
     fragmentShader: `uniform float uTime; uniform float uOpacity; uniform vec3 uColor; varying vec3 vN; varying vec3 vV; varying float vY;
-      void main(){ float f = pow(1.-abs(dot(vN,vV)), 2.2); float scan = 0.55+0.45*sin(vY*60.-uTime*8.);
+      void main(){ float f = pow(clamp(1.-abs(dot(normalize(vN),vV)), 0., 1.), 2.2); /* clamp: pow de número negativo = NaN na placa de vídeo */ float scan = 0.55+0.45*sin(vY*60.-uTime*8.);
         float a = (f*1.2+0.12)*scan*uOpacity; gl_FragColor = vec4(uColor*(0.6+f*1.4), a); }`,
   });
   const holo = new THREE.Group();

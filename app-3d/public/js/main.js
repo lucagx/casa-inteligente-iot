@@ -115,7 +115,8 @@ composer.addPass(output);
 // Proteção contra pixel "infinito"/NaN no buffer HDR (meia precisão, máx. 65504).
 // Um único pixel assim, ao passar pelo bloom, se espalha e apaga a tela inteira — era o que
 // acontecia no alarme (luz forte colada na sirene). Aqui ele é limitado antes do bloom e da saída.
-const SAFE = 'vec4 safeTex(sampler2D t, vec2 uv){ vec4 c = texture2D(t, uv); if (c.r != c.r || c.g != c.g || c.b != c.b) c = vec4(0.0, 0.0, 0.0, 1.0); return vec4(min(c.rgb, vec3(2000.0)), c.a); }\n';
+// max() antes de min(): no DirectX, max(NaN, 0) = 0 (o teste c != c pode ser removido pelo compilador)
+const SAFE = 'vec4 safeTex(sampler2D t, vec2 uv){ vec4 c = texture2D(t, uv); if (c.r != c.r || c.g != c.g || c.b != c.b) c = vec4(0.0, 0.0, 0.0, 1.0); c.rgb = min(max(c.rgb, vec3(0.0)), vec3(64.0)); return c; }\n';
 for (const [mat, from] of [[bloom.materialHighPassFilter, 'vec4 texel = texture2D( tDiffuse, vUv );'], [output.material, 'gl_FragColor = texture2D( tDiffuse, vUv );']]) {
   const fs = mat.fragmentShader;
   if (!fs.includes(from)) continue;
