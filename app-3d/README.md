@@ -37,7 +37,7 @@ regras do firmware. Serve de plano B se a placa ou o Wi-Fi falharem na apresenta
 
 ### Ligando ao ESP32 de verdade
 
-1. Grave `firmware/casa_inteligente_esp32s3.ino` no ESP32-S3 (troque token, rede e senha).
+1. Grave `../firmware/casa_inteligente/casa_inteligente.ino` (com `NO_WOKWI 0` e `USAR_BLYNK 1`) no ESP32-S3 (troque token, rede e senha).
 2. No Blynk.Console, no template, garanta os datastreams **V0 a V11**
    (V10 e V11 são novos: *Integer*, 0–100 e 0–1).
 3. Copie `.env.example` para `.env` e preencha `BLYNK_TOKEN` e `BLYNK_SERVER`
