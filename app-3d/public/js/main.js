@@ -158,18 +158,20 @@ let world, atmo;
 const VIEWS = {
   geral:   { pos: [31, 17, 36], target: [0.8, 1.6, 1.0], label: 'Visão geral' },
   sala:    { pos: [0.6, 2.7, 12.6], target: [-2.8, 1.3, 1.0], label: 'Sala' },
-  entrada: { pos: [8.4, 2.4, 10.8], target: [3.4, 1.25, 3.8], label: 'Entrada' },
+  entrada: { pos: [4.4, 2.9, 13.6], target: [3.6, 1.4, 3.6], label: 'Entrada' }, // fora da calçada da garagem: o carro não tapa a porta
   janela:  { pos: [12.2, 3.0, 3.4], target: [6.0, 1.9, 0.0], label: 'Janela' },
-  garagem: { pos: [13.6, 3.0, 8.6], target: [6.9, 0.9, 2.6], label: 'Garagem' },
-  cobertura: { pos: [12.5, 12.5, 9.5], target: [3.0, 7.0, -0.6], label: 'Cobertura' },
+  garagem: { pos: [16.8, 6.2, 12.6], target: [7.0, 0.8, 4.8], label: 'Garagem' }, // pega sensor e calçada inteira (carro em qualquer distância)
+  cobertura: { pos: [10.5, 14.8, 14.5], target: [2.3, 6.9, 0.4], label: 'Cobertura' }, // LDR, sirene e antena no quadro
   corte:   { pos: [30, -4, 20], target: [0, -1.5, 0], label: 'Terreno' },
 };
 let tween = null;
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 // em tela vertical (celular) a câmera recua para caber a casa inteira
+// a distância de cada vista se adapta à proporção da ÁREA LIVRE (sem painéis), não da tela inteira
 function viewPos(v) {
-  const aspect = W() / H();
-  const k = aspect < 1.1 ? Math.min(1.9, Math.pow(1.1 / aspect, 0.62)) : 1;
+  const f = ui ? ui.freeRect() : { w: W(), h: H() };
+  const aspect = f.w / f.h;
+  const k = aspect < 1.25 ? Math.min(1.9, Math.pow(1.25 / aspect, 0.62)) : 1;
   const t = new THREE.Vector3(...v.target);
   return new THREE.Vector3(...v.pos).sub(t).multiplyScalar(k).add(t);
 }
@@ -196,25 +198,38 @@ let idle = 0;
 controls.addEventListener('start', () => { idle = 0; controls.autoRotate = false; tween = null; });
 controls.addEventListener('change', () => { if (!tween) idle = 0; });
 
-function frameForPanel() {
+// Enquadramento dinâmico: o centro da cena vai para o centro da área livre da tela.
+// Usa um "quadro virtual" maior que a tela (setViewOffset) e mostra só a parte visível,
+// deslocada. O campo de visão é corrigido para o zoom não mudar quando o painel abre/fecha.
+const BASE_FOV = 34;
+const framing = { dx: 0, dy: 0, tx: 0, ty: 0, w: 0, h: 0 };
+function applyFraming() {
   const w = W(), h = H();
-  camera.aspect = w / h;
-  if (w > 900) {
-    const d = 190;
-    camera.setViewOffset(w + 2 * d, h, 2 * d, 0, w, h);
-    camera.aspect = (w + 2 * d) / h;
-  } else {
-    const dy = Math.round(h * 0.07);
-    camera.setViewOffset(w, h + 2 * dy, 0, 2 * dy, w, h);
-    camera.aspect = w / (h + 2 * dy);
-  }
+  const ax = Math.abs(framing.dx), ay = Math.abs(framing.dy);
+  const fw = w + 2 * ax, fh = h + 2 * ay;
+  camera.setViewOffset(fw, fh, framing.dx < 0 ? 2 * ax : 0, framing.dy < 0 ? 2 * ay : 0, w, h);
+  camera.aspect = fw / fh;
+  camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(BASE_FOV / 2)) * fh / h));
   camera.updateProjectionMatrix();
+  framing.w = w; framing.h = h;
 }
-frameForPanel();
+function updateFraming(dt, instant = false) {
+  if (!ui) return;
+  const f = ui.freeRect(dt);
+  framing.tx = f.x + f.w / 2 - W() / 2;
+  framing.ty = f.y + f.h / 2 - H() / 2;
+  const k = instant ? 1 : 1 - Math.exp(-7 * dt);
+  const ndx = framing.dx + (framing.tx - framing.dx) * k, ndy = framing.dy + (framing.ty - framing.dy) * k;
+  if (Math.abs(ndx - framing.dx) > 0.2 || Math.abs(ndy - framing.dy) > 0.2 || framing.w !== W() || framing.h !== H() || instant) {
+    framing.dx = ndx; framing.dy = ndy;
+    applyFraming();
+  }
+}
+applyFraming();
 
 let extraScale = 1;
 addEventListener('resize', () => {
-  frameForPanel();
+  applyFraming();
   applyTier(tier, extraScale);
   labels.setSize(W(), H());
 });
@@ -279,6 +294,7 @@ function frame() {
     idle += dt;
     if (idle > 16 && !controls.autoRotate) controls.autoRotate = true;
   }
+  updateFraming(dt, shot);
   controls.update(dt);
 
   if (fixedNight !== null) atmo.setNight(Number(fixedNight));
@@ -326,6 +342,7 @@ async function init() {
     },
   });
 
+  updateFraming(0, true);
   const start = params.get('view');
   if (start && VIEWS[start]) {
     const v = VIEWS[start];

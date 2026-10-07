@@ -12,6 +12,12 @@ const ICON = {
   siren: '<path d="M6 18v-5a6 6 0 0 1 12 0v5"/><path d="M4 21h16M12 3v2M4.5 6.5l1.4 1.4M19.5 6.5l-1.4 1.4"/>',
   chip: '<rect x="7" y="7" width="10" height="10" rx="1"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/>',
   car: '<path d="M5 16V12l2-5h10l2 5v4"/><path d="M3 16h18v2H3z"/><circle cx="7.5" cy="18" r="1.5"/><circle cx="16.5" cy="18" r="1.5"/><path d="M5 12h14"/>',
+  min: '<path d="M6 12h12"/>',
+  expand: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',
+  swap: '<path d="M7 7h12l-3-3M17 17H5l3 3"/>',
+  lPanel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M14 4v16"/>',
+  lCompact: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
+  lFocus: '<path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/><circle cx="12" cy="12" r="2.5"/>',
   auto: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="5"/>',
 };
 const svg = (k, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>`;
@@ -119,7 +125,7 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     clearTimeout(toastT);
     toastT = setTimeout(() => (toastEl.className = 'toast'), 2600);
   }
-  const feed = $('#feed');
+  const feed = $('#feedRows');
   function event(msg, kind = '') {
     const d = new Date();
     const row = document.createElement('div');
@@ -223,7 +229,19 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
         hv[d.key].textContent = d.label(on, v);
       }
     }
+    // faixa compacta
+    $('#hT').textContent = Number.isFinite(temp) ? temp.toFixed(1) : '--';
+    $('#hU').textContent = Number.isFinite(umid) ? Math.round(umid) : '--';
+    $('#hL').textContent = Number.isFinite(luz) ? Math.round(luz) : '--';
+    $('#hLi').innerHTML = svg(v.V6 === 'ESCURO' ? 'moon' : 'sun');
+    $('#hP').textContent = pres ? 'movimento' : 'livre';
+    $('#hPw').classList.toggle('alert', pres);
+    $('#hMode').textContent = auto ? 'AUTO' : 'MANUAL';
+    $('#hMode').classList.toggle('on', auto);
+    for (const d of DEVICES) $(`#ha-${d.key}`).classList.toggle('on', d.on(v));
+
     const firing = /ATIVO/.test(v.V8 || '');
+    $('#ha-alarme').classList.toggle('firing', firing);
     $('#dev-alarme').classList.toggle('firing', firing);
     hot.alarme.classList.toggle('firing', firing);
     document.body.classList.toggle('alarm', firing);
@@ -235,6 +253,8 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     $('#vCar').textContent = Number.isFinite(dist) && v.V12 !== '' ? Math.round(dist) : '--';
     $('#bCar').style.width = `${Number.isFinite(dist) ? Math.max(4, 100 - Math.min(100, dist / 2)) : 0}%`;
     $('#sCar').classList.toggle('alert', z?.kind === 'red');
+    $('#hC').textContent = Number.isFinite(dist) && v.V12 !== '' ? Math.round(dist) : '--';
+    $('#hCw').classList.toggle('alert', z?.kind === 'red');
     hv.garagem.textContent = z ? `${Math.round(dist)} cm · ${z.text}` : '--';
     hot.garagem.classList.toggle('on', !!z && z.kind !== '');
     hv.ldr.textContent = Number.isFinite(luz) ? `${Math.round(luz)}% · ${v.V6 || ''}` : v.V6 || '--';
@@ -292,10 +312,164 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
 
   setQuality(quality, qualityAuto);
 
+  // ================================================================
+  // Layouts: painel (completo) · compacto (faixa com dados) · foco (apresentação)
+  // O painel pode ser arrastado pelo cabeçalho; solto perto da borda, encaixa.
+  // ================================================================
+  const store = {
+    get() { try { return JSON.parse(localStorage.getItem('casa3d.layout') || '{}'); } catch { return {}; } },
+    set(v) { try { localStorage.setItem('casa3d.layout', JSON.stringify(v)); } catch { /* sem storage */ } },
+  };
+  const LAYOUTS = { painel: ['Painel', 'lPanel', '1'], compacto: ['Compacto', 'lCompact', '2'], foco: ['Foco', 'lFocus', '3'] };
+  const pref = Object.assign({ layout: 'painel', dock: 'right', x: null, y: null, feed: true }, store.get());
+  const qp = new URLSearchParams(location.search);
+  if (LAYOUTS[qp.get('layout')]) pref.layout = qp.get('layout');
+  if (['left', 'right'].includes(qp.get('dock'))) pref.dock = qp.get('dock');
+  const hud = $('#hud'), layoutsEl = $('#layouts'), phead = $('#phead'), feedBox = $('#feed'), feedToggle = $('#feedToggle');
+  const mobile = () => innerWidth <= 900;
+  let freeDirty = true, free = { x: 0, y: 0, w: innerWidth, h: innerHeight };
+
+  layoutsEl.innerHTML = Object.entries(LAYOUTS).map(([k, [name, ic, key]]) =>
+    `<button type="button" data-layout="${k}" title="${name} (tecla ${key})" aria-label="${name}">${svg(ic)}<span>${name}</span></button>`).join('');
+  $('#pMin').innerHTML = svg('min');
+  $('#pDock').innerHTML = svg('swap');
+
+  hud.innerHTML = `
+    <div class="hud-data">
+      <span class="hd" title="Temperatura · DHT11 (V4)">${svg('temp')}<b id="hT">--</b><small>°C</small></span>
+      <span class="hd" title="Umidade · DHT11 (V5)">${svg('drop')}<b id="hU">--</b><small>%</small></span>
+      <span class="hd" title="Luminosidade · LDR (V10)"><span id="hLi">${svg('sun')}</span><b id="hL">--</b><small>%</small></span>
+      <span class="hd" id="hPw" title="Presença · PIR (V11)">${svg('radar')}<b id="hP">--</b></span>
+      <span class="hd" id="hCw" title="Garagem · HC-SR04 (V12)">${svg('car')}<b id="hC">--</b><small>cm</small></span>
+    </div>
+    <div class="hud-acts">
+      <button type="button" class="hmode" id="hMode" title="Alternar modo automático/manual">--</button>
+      ${DEVICES.map((d) => `<button type="button" class="hact" id="ha-${d.key}" data-dev="${d.key}" title="${d.name} · ${d.hw}" aria-label="${d.name}">${svg(d.icon)}</button>`).join('')}
+    </div>
+    <button type="button" class="hud-exp" id="hudExp" title="Abrir painel (1)" aria-label="Abrir painel">${svg('expand')}</button>`;
+  hud.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.dev) toggle(DEVICES.find((d) => d.key === b.dataset.dev));
+    else if (b.id === 'hMode') setMode(values.V3 !== '1');
+    else if (b.id === 'hudExp') setLayout('painel');
+  });
+
+  function applyLayout() {
+    const L = mobile() ? 'painel' : pref.layout;
+    document.body.dataset.layout = L;
+    document.body.dataset.dock = pref.dock;
+    document.body.classList.toggle('tags', L === 'foco');
+    hud.hidden = L === 'painel';
+    panel.classList.toggle('dock-left', !mobile() && pref.dock === 'left');
+    panel.classList.toggle('float', !mobile() && pref.dock === 'float');
+    if (!mobile() && pref.dock === 'float' && pref.x !== null) {
+      const r = clampFloat(pref.x, pref.y);
+      panel.style.left = `${r.x}px`; panel.style.top = `${r.y}px`;
+    } else { panel.style.left = ''; panel.style.top = ''; }
+    feedBox.classList.toggle('collapsed', !pref.feed);
+    feedToggle.setAttribute('aria-expanded', String(pref.feed));
+    layoutsEl.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.layout === L));
+    freeDirty = true;
+  }
+  function save() { store.set({ layout: pref.layout, dock: pref.dock, x: pref.x, y: pref.y, feed: pref.feed }); }
+  function setLayout(l) { pref.layout = l; applyLayout(); save(); }
+  function clampFloat(x, y) {
+    const w = panel.offsetWidth || 364, h = Math.min(panel.offsetHeight || 600, innerHeight - 36);
+    return { x: Math.min(Math.max(12, x), innerWidth - w - 12), y: Math.min(Math.max(12, y), Math.max(12, innerHeight - h - 12)) };
+  }
+
+  layoutsEl.addEventListener('click', (e) => { const b = e.target.closest('button[data-layout]'); if (b) setLayout(b.dataset.layout); });
+  $('#pMin').addEventListener('click', () => setLayout('compacto'));
+  $('#pDock').addEventListener('click', () => { pref.dock = pref.dock === 'right' ? 'left' : 'right'; pref.x = pref.y = null; applyLayout(); save(); });
+  feedToggle.addEventListener('click', () => { pref.feed = !pref.feed; applyLayout(); save(); });
+  addEventListener('keydown', (e) => {
+    if (e.target.closest('input, textarea, select') || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = { 1: 'painel', 2: 'compacto', 3: 'foco' }[e.key];
+    if (k) setLayout(k);
+  });
+  addEventListener('resize', applyLayout);
+  for (const el of [panel, hud]) el.addEventListener('transitionend', () => (freeDirty = true));
+  $('#sheetToggle').addEventListener('click', () => setTimeout(() => (freeDirty = true), 500));
+
+  // arrastar o painel pelo cabeçalho
+  let drag = null;
+  phead.addEventListener('pointerdown', (e) => {
+    if (mobile() || e.button !== 0 || e.target.closest('button')) return;
+    const r = panel.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top, moved: false };
+    phead.setPointerCapture(e.pointerId);
+  });
+  phead.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      panel.classList.add('dragging');
+      pref.dock = 'float';
+      applyLayout();
+    }
+    const r = clampFloat(e.clientX - drag.dx, e.clientY - drag.dy);
+    pref.x = r.x; pref.y = r.y;
+    panel.style.left = `${r.x}px`; panel.style.top = `${r.y}px`;
+    document.body.dataset.snap = e.clientX < 90 ? 'left' : e.clientX > innerWidth - 90 ? 'right' : '';
+    freeDirty = true;
+  });
+  const endDrag = (e) => {
+    if (!drag) return;
+    panel.classList.remove('dragging');
+    if (drag.moved) {
+      if (e.clientX < 90) pref.dock = 'left';
+      else if (e.clientX > innerWidth - 90) pref.dock = 'right';
+      if (pref.dock !== 'float') pref.x = pref.y = null;
+      applyLayout(); save();
+    }
+    document.body.dataset.snap = '';
+    drag = null;
+  };
+  phead.addEventListener('pointerup', endDrag);
+  phead.addEventListener('pointercancel', endDrag);
+  phead.addEventListener('dblclick', (e) => { if (!e.target.closest('button')) { pref.dock = 'right'; pref.x = pref.y = null; applyLayout(); save(); } });
+
+  // Área livre da tela (sem painéis): a câmera centraliza a cena nela.
+  // Recalculada só quando algo muda (ler o layout a cada quadro custaria desempenho).
+  function measureFree() {
+    const w = innerWidth, h = innerHeight;
+    let l = 0, r = w, t = 0, b = h;
+    if (!mobile()) { t = 70; b = h - 80; }
+    const rects = [];
+    const add = (el) => { if (!el || el.hidden) return; const rc = el.getBoundingClientRect(); if (rc.width > 2 && rc.height > 2) rects.push(rc); };
+    // a faixa compacta é pequena e fica no canto: não desloca a cena (só o painel completo desloca)
+    if (document.body.dataset.layout === 'painel') add(panel);
+    if (mobile()) add($('#views'));
+    for (const rc of rects) {
+      if (rc.height > h * 0.45 && rc.width < w * 0.6) {           // coluna lateral
+        if (rc.left + rc.width / 2 > w / 2) r = Math.min(r, rc.left - 12); else l = Math.max(l, rc.right + 12);
+      } else if (rc.top > h * 0.5) b = Math.min(b, rc.top - 8);   // faixa embaixo
+      else t = Math.max(t, rc.bottom + 8);                          // faixa em cima
+    }
+    if (r - l < 200) { l = 0; r = w; }
+    if (b - t < 160) { t = 0; b = h; }
+    free = { x: l, y: t, w: r - l, h: b - t };
+    freeDirty = false;
+  }
+  let freeTimer = 0;
+
+  applyLayout();
+
   return {
+    freeRect(dt = 0) {
+      freeTimer += dt;
+      if (freeDirty || freeTimer > 1) { freeTimer = 0; measureFree(); }
+      return free;
+    },
+    setLayout,
     setQuality,
     setFps(v) { qBtn.textContent = `${qLabel} · ${Math.round(v)} FPS`; },
-    ready() { document.body.classList.add('ready'); },
+    ready() {
+      document.body.classList.add('ready');
+      // depois da animação de entrada, as transições de layout ficam rápidas e a área livre é medida de novo
+      setTimeout(() => { document.body.classList.add('settled'); freeDirty = true; }, 2600);
+    },
     tick() {
       if (!lastStateAt) return;
       const s = Math.round((Date.now() - lastStateAt) / 1000);

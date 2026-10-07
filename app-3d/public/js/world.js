@@ -286,7 +286,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     // braço do servo (atuador) na base do caixilho
     box(eastWall, 0.12, 0.06, 0.05, M.pcbBlue, servoO.u + 0.25, servoO.v + 0.1, 0.05);
   }
-  anchor('janela', 6.25, FL + servoO.v + servoO.h / 2 + 0.2, 0);
+  anchor('janela', 6.25, FL + servoO.v + 0.35, 0); // parte baixa da janela: não encosta no rótulo do DHT11
 
   // Parede norte (cozinha)
   const kitO = { u: 2.0, v: 1.1, w: 2.6, h: 1.1 };
@@ -861,7 +861,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     box(g, 0.2, 0.3, 0.02, M.pcbBlue, 0, 0, 0.01);
     box(g, 0.16, 0.22, 0.06, M.dhtBlue, 0, 0.01, 0.05, { round: 0.01 });
     for (let r = 0; r < 5; r++) for (let c = 0; c < 4; c++) box(g, 0.022, 0.022, 0.01, M.black, -0.045 + c * 0.03, -0.06 + r * 0.035, 0.08, { cast: false });
-    anchor('dht', 6.3, FL + 2.2, 1.35);
+    anchor('dht', 6.3, FL + 2.35, 1.35);
   }
 
   // LDR (A0 → V6/V10) na cobertura: decide se é dia ou noite para a luz automática

@@ -43,6 +43,12 @@
 
   <aside class="panel" id="panel">
     <button class="sheet-toggle" id="sheetToggle" type="button" aria-label="Abrir painel"><span></span></button>
+    <div class="phead" id="phead" title="Arraste para mover · solte na borda para encaixar">
+      <span class="grip" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      <span class="ptitle">Painel</span>
+      <button type="button" class="pbtn" id="pDock" aria-label="Encaixar do outro lado" title="Encaixar do outro lado"></button>
+      <button type="button" class="pbtn" id="pMin" aria-label="Minimizar painel" title="Minimizar (2)"></button>
+    </div>
 
     <section>
       <h2>Ambiente</h2>
@@ -76,8 +82,16 @@
     <button type="button" class="quality" id="quality">Qualidade</button>
   </aside>
 
-  <nav class="views" id="views" aria-label="Câmeras"></nav>
-  <div class="feed" id="feed" aria-live="polite"></div>
+  <div class="hud" id="hud" hidden></div>
+
+  <div class="dock-bar">
+    <nav class="views" id="views" aria-label="Câmeras"></nav>
+    <div class="layouts" id="layouts" role="group" aria-label="Layout da tela"></div>
+  </div>
+  <div class="feed" id="feed">
+    <div class="feed-rows" id="feedRows" aria-live="polite"></div>
+    <button type="button" class="feed-toggle" id="feedToggle" aria-expanded="true">Eventos</button>
+  </div>
   <div class="toast" id="toast" role="status"></div>
 
   <script type="module" src="/js/main.js"></script>
