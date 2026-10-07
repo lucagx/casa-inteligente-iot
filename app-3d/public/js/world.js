@@ -58,6 +58,10 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     whitePlastic: std({ color: 0xf2f2ee, roughness: 0.55 }),
     pcbBlack: std({ color: 0x15171a, roughness: 0.6 }),
     pcbBlue: std({ color: 0x1b4f9c, roughness: 0.55 }),
+    pcbGreen: std({ color: 0x1f6b3a, roughness: 0.55 }),
+    dhtBlue: std({ color: 0x3d8fe0, roughness: 0.5 }),
+    fresnel: new THREE.MeshPhysicalMaterial({ color: 0xf4f4f0, roughness: 0.35, transmission: 0.3, thickness: 0.05 }),
+    trimpot: std({ color: 0xe8a33a, roughness: 0.5 }),
     gold: std({ color: 0xd9b25a, metalness: 1, roughness: 0.3 }),
     carPaint: new THREE.MeshPhysicalMaterial({ color: 0x1d2b3c, metalness: 0.8, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.08 }),
     rubber: std({ color: 0x111111, roughness: 0.9 }),
@@ -583,22 +587,35 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     bollards.push(head);
   }
 
-  // carro elétrico na garagem
+  // carro elétrico — entra de frente na garagem; a posição vem do HC-SR04 (V12)
+  const car = new THREE.Group();
+  const carWheels = [];
+  const carHeadMat = std({ color: 0xffffff, emissive: 0xdfefff, emissiveIntensity: 0.25 });
+  const carTailMat = std({ color: 0x550000, emissive: 0xff2030, emissiveIntensity: 0.8 });
   {
-    const car = new THREE.Group();
-    car.position.set(7.45, 0.05, 7.4);
-    car.rotation.y = 0.04;
+    car.position.set(7.1, 0.05, 7.4);   // afastado do pilar da garagem (x = 8.15)
+    car.scale.setScalar(0.88);
+    car.rotation.y = Math.PI; // frente (faróis, +z local) virada para o fundo da garagem
     box(car, 1.85, 0.62, 4.5, M.carPaint, 0, 0.62, 0, { round: 0.22 });
     box(car, 1.62, 0.52, 2.5, M.tinted, 0, 1.12, -0.25, { round: 0.25 });
     for (const [x, z] of [[-0.86, 1.4], [0.86, 1.4], [-0.86, -1.45], [0.86, -1.45]]) {
-      const w = cyl(car, 0.36, 0.36, 0.24, M.rubber, x, 0.36, z, 28);
+      // roda num grupo próprio para girar conforme o carro anda
+      const wg = new THREE.Group();
+      wg.position.set(x, 0.36, z);
+      car.add(wg);
+      const w = cyl(wg, 0.36, 0.36, 0.24, M.rubber, 0, 0, 0, 28);
       w.rotation.z = Math.PI / 2;
-      const rim = cyl(car, 0.22, 0.22, 0.25, M.steel, x, 0.36, z, 20);
+      const rim = cyl(wg, 0.22, 0.22, 0.25, M.steel, 0, 0, 0, 20);
       rim.rotation.z = Math.PI / 2;
+      for (let k = 0; k < 5; k++) { // raios: deixam a rotação visível
+        const sp = box(wg, 0.26, 0.05, 0.035, M.frame, 0, 0, 0, { cast: false });
+        sp.rotation.x = (k / 5) * Math.PI;
+      }
+      carWheels.push(wg);
     }
-    const head = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.04, 0.02), std({ color: 0xffffff, emissive: 0xdfefff, emissiveIntensity: 0.25 }));
+    const head = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.04, 0.02), carHeadMat);
     head.position.set(0, 0.78, 2.26); car.add(head);
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.05, 0.02), std({ color: 0x550000, emissive: 0xff2030, emissiveIntensity: 0.8 }));
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.05, 0.02), carTailMat);
     tail.position.set(0, 0.8, -2.26); car.add(tail);
     root.add(car);
   }
@@ -738,7 +755,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // ================================================================
   const zOut = 3.5 + T / 2; // face externa da parede sul
 
-  // ESP32-S3 em caixa de vidro, na parede ao lado da porta
+  // NodeMCU ESP8266 em caixa de vidro, na parede ao lado da porta
   const espLedMat = std({ color: 0x3aa0ff, emissive: 0x3aa0ff, emissiveIntensity: 2 });
   {
     const g = new THREE.Group();
@@ -747,55 +764,86 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     box(g, 0.46, 0.66, 0.05, M.whitePlastic, 0, 0, 0.025, { round: 0.02 });
     const cover = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.64, 0.09), M.railGlass);
     cover.position.z = 0.1; g.add(cover);
-    const pcb = box(g, 0.16, 0.46, 0.012, M.pcbBlack, 0, -0.01, 0.07);
-    box(g, 0.1, 0.12, 0.014, M.steel, 0, 0.13, 0.083);        // blindagem do módulo
-    box(g, 0.1, 0.05, 0.01, M.pcbBlack, 0, 0.215, 0.078);     // antena PCB
-    for (const side of [-1, 1]) for (let i = 0; i < 20; i++) box(g, 0.012, 0.012, 0.02, M.gold, side * 0.068, -0.2 + i * 0.019, 0.085, { cast: false });
-    box(g, 0.035, 0.022, 0.018, M.steel, -0.03, -0.23, 0.083);
-    box(g, 0.035, 0.022, 0.018, M.steel, 0.03, -0.23, 0.083);
+    // NodeMCU v2: placa preta 49×26 mm, módulo ESP-12 com blindagem e antena em zigue-zague,
+    // 2 fileiras de 15 pinos, micro-USB embaixo e botões RST/FLASH ao lado
+    const pcb = box(g, 0.22, 0.42, 0.012, M.pcbBlack, 0, -0.01, 0.07);
+    box(g, 0.13, 0.17, 0.006, M.pcbBlue, 0, 0.1, 0.078);       // módulo ESP-12
+    box(g, 0.11, 0.11, 0.014, M.steel, 0, 0.08, 0.085);        // blindagem metálica
+    for (let i = 0; i < 4; i++) box(g, 0.1, 0.008, 0.004, M.gold, 0, 0.165 + i * 0.012, 0.083, { cast: false }); // antena
+    for (const side of [-1, 1]) for (let i = 0; i < 15; i++) box(g, 0.014, 0.014, 0.02, M.gold, side * 0.095, -0.2 + i * 0.026, 0.085, { cast: false });
+    box(g, 0.05, 0.024, 0.02, M.steel, 0, -0.205, 0.083);      // micro-USB
+    box(g, 0.025, 0.02, 0.016, M.black, -0.06, -0.17, 0.082);  // RST
+    box(g, 0.025, 0.02, 0.016, M.black, 0.06, -0.17, 0.082);   // FLASH (botão do alarme, D3)
+    box(g, 0.05, 0.05, 0.01, M.pcbBlack, 0, -0.08, 0.08);      // conversor USB-serial CH340
     const led = new THREE.Mesh(new THREE.SphereGeometry(0.009, 10, 10), espLedMat);
-    led.position.set(0.045, -0.15, 0.085); g.add(led);
+    led.position.set(0.045, 0.02, 0.09); g.add(led);
     // cabo de dados subindo pela parede até a antena
     box(root, 0.03, SLAB0 - FL - 1.8, 0.03, M.frame, 5.05, FL + 1.8 + (SLAB0 - FL - 1.8) / 2, zOut + 0.02);
-    anchor('esp32', 5.05, FL + 2.0, zOut + 0.1);
+    anchor('mcu', 5.05, FL + 2.0, zOut + 0.1);
     void pcb;
   }
 
-  // HC-SR04 (sensor de presença) ao lado da porta
+  // PIR HC-SR501 (sensor de presença, D5 → V11) ao lado da porta
   const scanMat = new THREE.MeshBasicMaterial({ color: 0x5ee7ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
   let scanCone;
   {
     const g = new THREE.Group();
     g.position.set(4.35, FL + 1.05, zOut);
     root.add(g);
-    box(g, 0.28, 0.13, 0.015, M.pcbBlue, 0, 0, 0.01);
-    for (const x of [-0.075, 0.075]) {
-      const c = cyl(g, 0.045, 0.045, 0.07, M.steel, x, 0, 0.05, 24);
-      c.rotation.x = Math.PI / 2;
-      const mesh = cyl(g, 0.038, 0.038, 0.002, M.black, x, 0, 0.086, 24);
-      mesh.rotation.x = Math.PI / 2;
+    box(g, 0.2, 0.2, 0.015, M.pcbGreen, 0, 0, 0.01);
+    box(g, 0.16, 0.16, 0.02, M.whitePlastic, 0, 0, 0.025);
+    const lens = new THREE.Mesh(new THREE.SphereGeometry(0.075, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.fresnel);
+    lens.rotation.x = Math.PI / 2; lens.position.z = 0.035; g.add(lens);
+    for (const x of [-0.045, 0.045]) { // trimpots de sensibilidade e tempo
+      const tp = cyl(g, 0.018, 0.018, 0.012, M.trimpot, x, -0.115, 0.02, 12);
+      tp.rotation.x = Math.PI / 2;
     }
-    box(g, 0.03, 0.02, 0.01, M.steel, 0, 0.045, 0.02);
-    scanCone = new THREE.Mesh(new THREE.ConeGeometry(0.55, 1.8, 32, 1, true), scanMat);
+    scanCone = new THREE.Mesh(new THREE.ConeGeometry(1.1, 2.4, 32, 1, true), scanMat);
     scanCone.rotation.x = -Math.PI / 2;
-    scanCone.position.set(0, 0, 0.95);
+    scanCone.position.set(0, -0.15, 1.25);
     g.add(scanCone);
-    anchor('hcsr04', 4.35, FL + 1.3, zOut + 0.1);
+    anchor('pir', 4.35, FL + 1.3, zOut + 0.1);
   }
 
-  // DHT22 na parede leste, perto da janela
+  // HC-SR04 (ultrassom, TRIG D4 / ECHO D6 → V12) no fundo da garagem, medindo o carro.
+  // Fica num poste com barra de LEDs de estacionamento (verde/âmbar/vermelho).
+  const SONAR_Z = 0.95;                    // face do sensor (fundo da vaga)
+  const parkMats = [0x36e39a, 0xffb020, 0xff3b55].map((c) => std({ color: 0x222222, emissive: c, emissiveIntensity: 0 }));
+  const sonarMat = new THREE.MeshBasicMaterial({ color: 0x5ee7ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  let sonarBeam;
+  {
+    const g = new THREE.Group();
+    g.position.set(7.1, 0, SONAR_Z - 0.06);
+    root.add(g);
+    box(g, 0.12, 1.25, 0.12, M.frame, 0, 0.625, 0);
+    box(g, 0.3, 0.14, 0.015, M.pcbBlue, 0, 0.7, 0.07);
+    for (const x of [-0.08, 0.08]) {
+      const c = cyl(g, 0.048, 0.048, 0.07, M.steel, x, 0.7, 0.11, 24);
+      c.rotation.x = Math.PI / 2;
+      const mesh = cyl(g, 0.04, 0.04, 0.002, M.black, x, 0.7, 0.146, 24);
+      mesh.rotation.x = Math.PI / 2;
+    }
+    box(g, 0.03, 0.02, 0.01, M.steel, 0, 0.75, 0.08); // cristal
+    parkMats.forEach((m, i) => box(g, 0.08, 0.08, 0.04, m, (i - 1) * 0.1, 1.05, 0.07, { cast: false }));
+    sonarBeam = new THREE.Mesh(new THREE.ConeGeometry(0.45, 1, 24, 1, true), sonarMat);
+    sonarBeam.rotation.x = -Math.PI / 2;  // ponta no sensor, abre em direção ao carro
+    g.add(sonarBeam);
+    anchor('garagem', 7.1, 1.45, SONAR_Z);
+  }
+
+  // DHT11 (D2 → V4/V5) na parede leste, perto da janela — caixa azul
   {
     const g = new THREE.Group();
     g.position.set(6.0 + T / 2, FL + 1.85, 1.35);
     g.rotation.y = Math.PI / 2;
     root.add(g);
     box(g, 0.2, 0.3, 0.02, M.pcbBlue, 0, 0, 0.01);
-    box(g, 0.16, 0.24, 0.06, M.whitePlastic, 0, 0.01, 0.05, { round: 0.01 });
-    for (let i = 0; i < 6; i++) box(g, 0.12, 0.012, 0.01, M.frame, 0, -0.08 + i * 0.035, 0.083, { cast: false });
-    anchor('dht22', 6.3, FL + 2.2, 1.35);
+    box(g, 0.16, 0.22, 0.06, M.dhtBlue, 0, 0.01, 0.05, { round: 0.01 });
+    for (let r = 0; r < 5; r++) for (let c = 0; c < 4; c++) box(g, 0.022, 0.022, 0.01, M.black, -0.045 + c * 0.03, -0.06 + r * 0.035, 0.08, { cast: false });
+    anchor('dht', 6.3, FL + 2.2, 1.35);
   }
 
-  // LDR na cobertura
+  // LDR (A0 → V6/V10) na cobertura: decide se é dia ou noite para a luz automática
   {
     const g = new THREE.Group();
     g.position.set(7.4, ROOF0 + 0.3, 2.3);
@@ -841,7 +889,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   alarmPoint.position.copy(beaconPos).add(new THREE.Vector3(0, 0.3, 0.3));
   root.add(alarmPoint);
 
-  // Holograma de presença na entrada (aparece quando o HC-SR04 detecta alguém)
+  // Holograma de presença na entrada (aparece quando o PIR detecta movimento)
   const holoMat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     uniforms: { uTime: { value: 0 }, uOpacity: { value: 0 }, uColor: { value: new THREE.Color(0x5ee7ff) } },
@@ -899,6 +947,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     win: 0, winT: 0,
     alarm: 0, alarmT: 0, armed: false,
     presence: 0, presenceT: 0,
+    gap: 6, gapT: 6, carSpeed: 0, dist: NaN,
     online: false, pulse: 0,
     night: 0,
   };
@@ -916,7 +965,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     g.fillStyle = '#ffffff'; g.font = '700 170px "Unbounded", sans-serif';
     g.fillText(`${v.V4 ? Number(v.V4).toFixed(1) : '--'}°`, 50, 300);
     g.fillStyle = '#8aa3bf'; g.font = '500 30px "DM Sans", sans-serif';
-    g.fillText('temperatura interna · DHT22', 58, 350);
+    g.fillText('temperatura interna · DHT11', 58, 350);
     const cards = [['UMIDADE', `${v.V5 ?? '--'}%`], ['LUZ', `${v.V10 ?? '--'}%`], ['JANELA', v.V7 ?? '--']];
     cards.forEach(([k, val], i) => {
       const x = 56 + i * 316;
@@ -935,11 +984,22 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     S.armed = v.V9 === '1';
     S.alarmT = /ATIVO/i.test(v.V8 || '') ? 1 : 0;
     S.presenceT = v.V11 === '1' ? 1 : 0;
+    S.dist = v.V12 === undefined || v.V12 === '' ? NaN : Number(v.V12);
+    S.gapT = distToGap(S.dist);
+    if (!S.gotState) { S.gap = S.gapT; S.gotState = true; } // ao abrir, o carro já aparece onde está
     S.online = !!meta.deviceOnline;
     lockLedMat.color.set(S.doorT ? 0x36e39a : 0xff3b55);
     lockLedMat.emissive.set(S.doorT ? 0x36e39a : 0xff3b55);
     drawTV(v, meta);
   }
+  // cm medidos pelo HC-SR04 → metros entre o sensor e o para-choque na cena.
+  // Na maquete o carrinho trabalha entre ~5 e 100 cm; acima disso a vaga está livre.
+  function distToGap(cm) {
+    if (!Number.isFinite(cm)) return 6;
+    const k = THREE.MathUtils.clamp((cm - 4) / 96, 0, 1);
+    return 0.12 + k * 5.9;
+  }
+
   function pulse() { S.pulse = 1; rings.forEach((r) => (r.t = Math.min(r.t, 0.05))); }
 
   const tmpV = new THREE.Vector3();
@@ -980,7 +1040,24 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     rg.material.opacity = S.presence * (1 - ((t * 0.9) % 1));
     scanMat.opacity = (0.015 + S.presence * 0.07) * (0.6 + 0.4 * Math.sin(t * 9)) * (S.online ? 1 : 0.3);
 
-    // ESP32: pulsação enquanto conectado
+    // garagem (V12): carro acompanha a distância medida, rodas giram, luz de freio ao parar
+    const prevGap = S.gap;
+    S.gap = damp(S.gap, S.gapT, 2.2, dt);
+    const vel = dt > 0 ? (S.gap - prevGap) / dt : 0;
+    const noseZ = SONAR_Z + S.gap;
+    car.position.z = noseZ + 2.27 * 0.88;
+    for (const w of carWheels) w.rotation.x -= (S.gap - prevGap) / (0.36 * 0.88);
+    S.carSpeed = damp(S.carSpeed, Math.abs(vel) > 0.05 ? 1 : 0, 4, dt); // luz de freio enquanto manobra
+    carTailMat.emissiveIntensity = 0.6 + S.carSpeed * 2.4;
+    carHeadMat.emissiveIntensity = 0.25 + S.night * 2.2;
+    const zone = !Number.isFinite(S.dist) ? -1 : S.dist <= 10 ? 2 : S.dist <= 30 ? 1 : S.dist <= 80 ? 0 : -1;
+    const blink = zone === 2 ? (Math.sin(t * 18) > 0 ? 1 : 0.15) : 1;
+    parkMats.forEach((m, i) => (m.emissiveIntensity = i === zone ? 2.2 * blink : 0.05));
+    sonarBeam.scale.set(1, Math.max(0.1, S.gap), 1);
+    sonarBeam.position.set(0, 0.7, 0.15 + S.gap / 2);
+    sonarMat.opacity = S.online && zone >= 0 ? 0.05 + 0.04 * Math.sin(t * 12) : 0.012;
+
+    // NodeMCU: pulsação enquanto conectado
     const beat = Math.pow(Math.max(0, Math.sin(t * 3.0)), 12);
     espLedMat.emissive.set(S.online ? 0x3aa0ff : 0xff5a3a);
     espLedMat.emissiveIntensity = S.online ? 1 + beat * 5 + S.pulse * 6 : 0.4 + beat * 2;

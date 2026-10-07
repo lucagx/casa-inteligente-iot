@@ -1,14 +1,21 @@
 /*
  * Casa Inteligente 3D — servidor
  * ------------------------------------------------------------------
- * Ponte em tempo real entre o ESP32-S3 (via Blynk Cloud) e a casa 3D.
+ * Ponte em tempo real entre o NodeMCU ESP8266 (via Blynk Cloud) e a casa 3D.
  *
- *   ESP32-S3 ── Wi-Fi ──> Blynk Cloud <── HTTP ── este servidor ── SSE ──> navegador (3D)
+ *   NodeMCU ── Wi-Fi ──> Blynk Cloud <── HTTP ── este servidor ── SSE ──> navegador (3D)
+ *
+ * Pinos virtuais (iguais ao firmware/casa_inteligente):
+ *   V0 luz (LED D1)   V1 trava da porta (LED D0)   V2 comando janela (servo D7)
+ *   V3 modo automático   V4 temperatura (DHT11 D2)   V5 umidade (DHT11)
+ *   V6 CLARO/ESCURO (LDR A0)   V7 estado da janela   V8 status do alarme (buzzer D8)
+ *   V9 armar alarme   V10 luminosidade % (LDR)   V11 presença (PIR D5)
+ *   V12 distância do carro na garagem em cm (HC-SR04 D4/D6)
  *
  * MODO AO VIVO     : BLYNK_TOKEN configurado no .env. O servidor lê os pinos
  *                    virtuais do seu dispositivo e envia cada mudança para a
  *                    página na hora (Server-Sent Events). Comandos da página
- *                    vão para o Blynk, que repassa ao ESP32.
+ *                    vão para o Blynk, que repassa à placa.
  * MODO DEMONSTRAÇÃO: sem token (ou DEMO=true). O servidor simula os sensores
  *                    e aplica exatamente as mesmas regras do firmware, para
  *                    apresentar mesmo sem a placa.
@@ -26,13 +33,13 @@ const HAS_TOKEN = TOKEN && !TOKEN.startsWith("cole_aqui");
 const MODE = process.env.DEMO === "true" || !HAS_TOKEN ? "demo" : "live";
 
 // Pinos virtuais (os mesmos do firmware)
-const PINS = ["V0", "V1", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11"];
+const PINS = ["V0", "V1", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12"];
 const WRITABLE = new Set(["V0", "V1", "V2", "V3", "V9"]);
 
 // Limiares idênticos ao firmware
 const TEMP_ABRIR = 30.0;
 const TEMP_FECHAR = 27.0;
-const LUZ_ESCURO_PCT = 35; // ~1500/4095 no ADC do ESP32-S3
+const LUZ_ESCURO_PCT = 35; // LIMIAR_ESCURO_PCT no firmware (LDR no A0)
 const ALARME_MS = 4000;
 
 const app = express();
@@ -55,7 +62,7 @@ let state = {
   // no modo ao vivo começa vazio: a página mostra "--" até a primeira leitura real
   values: MODE === "live" ? {} : {
     V0: "0", V1: "0", V3: "1", V4: "24.0", V5: "58", V6: "CLARO",
-    V7: "FECHADA", V8: "DESARMADO", V9: "0", V10: "72", V11: "0",
+    V7: "FECHADA", V8: "DESARMADO", V9: "0", V10: "72", V11: "0", V12: "120",
   },
 };
 
@@ -152,7 +159,7 @@ async function blynkUpdate(pin, value) {
 // ------------------------------------------------------------------
 // MODO DEMONSTRAÇÃO — mesmas regras do firmware
 // ------------------------------------------------------------------
-const sim = { temp: 24, umid: 58, luz: 72, presenca: false, alarmeAte: 0 };
+const sim = { temp: 24, umid: 58, luz: 72, presenca: false, dist: 120, alarmeAte: 0 };
 
 function simTick() {
   const v = state.values;
@@ -164,12 +171,14 @@ function simTick() {
     V10: Math.round(sim.luz),
     V6: sim.luz < LUZ_ESCURO_PCT ? "ESCURO" : "CLARO",
     V11: sim.presenca ? 1 : 0,
+    V12: Math.round(sim.dist),
   };
 
   if (auto) {
     if (sim.temp >= TEMP_ABRIR && v.V7 === "FECHADA") patch.V7 = "ABERTA";
     else if (sim.temp <= TEMP_FECHAR && v.V7 === "ABERTA") patch.V7 = "FECHADA";
-    patch.V0 = sim.luz < LUZ_ESCURO_PCT ? 1 : 0;
+    // firmware: luz acende com presença (PIR) e só quando está escuro (LDR)
+    patch.V0 = sim.presenca && sim.luz < LUZ_ESCURO_PCT ? 1 : 0;
   }
 
   const now = Date.now();
@@ -242,11 +251,12 @@ app.post("/api/command", async (req, res) => {
 // Controles de sensores simulados (apenas no modo demonstração)
 app.post("/api/sim", (req, res) => {
   if (MODE !== "demo") return res.status(409).json({ ok: false, error: "Disponível só no modo demonstração." });
-  const { temp, luz, umid, presenca } = req.body || {};
+  const { temp, luz, umid, presenca, dist } = req.body || {};
   if (temp !== undefined) sim.temp = Math.min(50, Math.max(0, Number(temp)));
   if (luz !== undefined) sim.luz = Math.min(100, Math.max(0, Number(luz)));
   if (umid !== undefined) sim.umid = Math.min(100, Math.max(0, Number(umid)));
   if (presenca !== undefined) sim.presenca = !!presenca;
+  if (dist !== undefined) sim.dist = Math.min(200, Math.max(2, Number(dist)));
   simTick();
   res.json({ ok: true });
 });

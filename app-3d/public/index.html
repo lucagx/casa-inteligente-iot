@@ -32,12 +32,12 @@
   <header class="brand">
     <p class="eyebrow">FEPI · Internet das Coisas e do Comportamento</p>
     <h1>Casa<br>Inteligente</h1>
-    <p class="sub">Gêmeo digital sincronizado com o ESP32-S3 via Blynk. O que acontece no protoboard acontece aqui.</p>
+    <p class="sub">Gêmeo digital sincronizado com o NodeMCU ESP8266 via Blynk. O que acontece no protoboard acontece aqui.</p>
   </header>
 
   <div class="chips">
     <div class="chip" id="chipLink"><i></i><span>Conectando…</span></div>
-    <div class="chip" id="chipDev"><i></i><span>ESP32-S3</span></div>
+    <div class="chip" id="chipDev"><i></i><span>NodeMCU</span></div>
     <div class="chip quiet" id="chipAge"><span>aguardando dados</span></div>
   </div>
 
@@ -67,7 +67,9 @@
       <input type="range" id="simTemp" min="10" max="45" step="0.5" value="24">
       <label class="slider" for="simLuz"><span>Luminosidade (LDR)</span><output id="simLuzV">70 %</output></label>
       <input type="range" id="simLuz" min="0" max="100" step="1" value="70">
-      <button type="button" class="hold" id="simPres">Segure para aproximar do HC-SR04</button>
+      <label class="slider" for="simDist"><span>Carro na garagem (HC-SR04)</span><output id="simDistV">120 cm</output></label>
+      <input type="range" id="simDist" min="2" max="200" step="1" value="120">
+      <button type="button" class="hold" id="simPres">Segure para simular presença no PIR</button>
     </section>
 
     <div class="err" id="errBox" hidden></div>
