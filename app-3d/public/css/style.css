@@ -161,6 +161,10 @@ body.ready .panel { opacity: 1; transform: none; }
 .device.locked { opacity: 0.72; }
 .device.locked .switch { opacity: 0.6; }
 
+/* céu */
+.skyctl input[type=range] { width: 100%; accent-color: var(--amber); margin: 2px 0 0; }
+#skyMode button { padding: 6px 10px; }
+
 /* simulação */
 .sim { padding-top: 14px; border-top: 1px dashed var(--stroke); }
 .slider { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); }

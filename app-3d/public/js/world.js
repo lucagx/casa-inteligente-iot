@@ -18,6 +18,9 @@ const damp = (cur, target, lambda, dt) => cur + (target - cur) * (1 - Math.exp(-
 // quality: 'high' | 'medium' | 'low' (ver main.js → perfis de qualidade)
 export function buildWorld(scene, { quality = 'high' } = {}) {
   const hi = quality === 'high';
+  // perfis com MSAA usam alpha-to-coverage: borda de folha/grama suave em vez de serrilhada e "cintilante"
+  const a2c = quality !== 'low';
+  const cutout = (o, test) => Object.assign(o, a2c ? { alphaToCoverage: true, alphaTest: 0.12 } : { alphaTest: test });
   const root = new THREE.Group();
   scene.add(root);
 
@@ -64,9 +67,9 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     fresnel: std({ color: 0xf4f4f0, roughness: 0.35 }), // sem transmissão: ela obriga a renderizar a cena 2×
     trimpot: std({ color: 0xe8a33a, roughness: 0.5 }),
     gold: std({ color: 0xd9b25a, metalness: 1, roughness: 0.3 }),
-    carPaint: new THREE.MeshPhysicalMaterial({ color: 0x1d2b3c, metalness: 0.8, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.08 }),
+    carPaint: new THREE.MeshPhysicalMaterial({ color: 0x2f6aa3, metalness: 0.55, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.06 }),
     rubber: std({ color: 0x111111, roughness: 0.9 }),
-    tinted: new THREE.MeshPhysicalMaterial({ color: 0x0b0f14, metalness: 0.2, roughness: 0.05, clearcoat: 1 }),
+    tinted: new THREE.MeshPhysicalMaterial({ color: 0x18222d, metalness: 0.3, roughness: 0.06, clearcoat: 1, envMapIntensity: 1.6 }),
   };
 
   // vidro: transmissão física no modo alto (reflexo + interior visível), transparência simples no modo leve
@@ -150,6 +153,45 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     if (sill) box(g, o.w + 0.16, 0.05, 0.14, M.stone, o.u + o.w / 2, o.v - 0.025, T + 0.06);
     return g;
   }
+  // ---------- janelas do servo (V2/V7): todas abrem e fecham juntas ----------
+  // casement: dobradiça vertical, abre para fora até 82°; awning: dobradiça em cima, projeta para fora até 38°
+  const servoSashes = []; // { hinge, kind }
+  function sashGeometry(g, sw, sh, fw, y0) {
+    box(g, sw, fw, 0.06, M.frame, sw / 2, y0 + sh - fw / 2, 0);
+    box(g, sw, fw, 0.06, M.frame, sw / 2, y0 + fw / 2, 0);
+    box(g, fw, sh, 0.06, M.frame, fw / 2, y0 + sh / 2, 0);
+    box(g, fw, sh, 0.06, M.frame, sw - fw / 2, y0 + sh / 2, 0);
+    const pane = new THREE.Mesh(new THREE.BoxGeometry(sw - fw * 2, sh - fw * 2, 0.018), M.glass);
+    pane.position.set(sw / 2, y0 + sh / 2, 0);
+    g.add(pane);
+  }
+  function servoMotor(wallMesh, x, y) {
+    // micro servo SG90 azul + braço até o caixilho
+    box(wallMesh, 0.12, 0.06, 0.05, M.pcbBlue, x, y, T + 0.03);
+    box(wallMesh, 0.02, 0.02, 0.09, M.whitePlastic, x + 0.03, y + 0.03, T + 0.07, { cast: false });
+  }
+  function servoCasement(wallMesh, o) {
+    const hinge = new THREE.Group();
+    hinge.userData.dynamic = true;
+    hinge.position.set(o.u + 0.06, o.v + o.h / 2, T - 0.03);
+    wallMesh.add(hinge);
+    const sw = o.w - 0.12, sh = o.h - 0.12;
+    sashGeometry(hinge, sw, sh, 0.055, -sh / 2);
+    box(hinge, 0.025, 0.16, 0.04, M.steel, sw - 0.09, 0, 0.05); // manopla
+    servoMotor(wallMesh, o.u + 0.25, o.v + 0.1);
+    servoSashes.push({ hinge, kind: 'casement' });
+  }
+  function servoAwning(wallMesh, u, v, w, h) {
+    const hinge = new THREE.Group();
+    hinge.userData.dynamic = true;
+    hinge.position.set(u, v + h, T - 0.03);
+    wallMesh.add(hinge);
+    sashGeometry(hinge, w, h, 0.05, -h);
+    box(hinge, 0.3, 0.025, 0.04, M.steel, w / 2, -h + 0.07, 0.05); // puxador
+    servoMotor(wallMesh, u + w - 0.2, v + 0.08);
+    servoSashes.push({ hinge, kind: 'awning' });
+  }
+
   // folhagem orgânica: icosfera com deslocamento suave pela posição
   function blobGeo(r, detail = 3, amp = 0.18, seed = 1) {
     let g = new THREE.IcosahedronGeometry(r, detail);
@@ -269,23 +311,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   const servoO = { u: 2.8, v: 1.05, w: 1.4, h: 1.4 };
   const eastWall = placeWall(wall(7, GH, [servoO], M.plaster), '-z', 3.5, 6.0, FL);
   frameOpening(eastWall, servoO, { glass: false, depth: T + 0.03 });
-  const sashHinge = new THREE.Group();
-  sashHinge.userData.dynamic = true;
-  sashHinge.position.set(servoO.u + 0.06, servoO.v + servoO.h / 2, T - 0.03);
-  eastWall.add(sashHinge);
-  {
-    const sw = servoO.w - 0.12, sh = servoO.h - 0.12, fw = 0.055;
-    box(sashHinge, sw, fw, 0.06, M.frame, sw / 2, sh / 2 - fw / 2, 0);
-    box(sashHinge, sw, fw, 0.06, M.frame, sw / 2, -sh / 2 + fw / 2, 0);
-    box(sashHinge, fw, sh, 0.06, M.frame, fw / 2, 0, 0);
-    box(sashHinge, fw, sh, 0.06, M.frame, sw - fw / 2, 0, 0);
-    const pane = new THREE.Mesh(new THREE.BoxGeometry(sw - fw * 2, sh - fw * 2, 0.018), M.glass);
-    pane.position.set(sw / 2, 0, 0);
-    sashHinge.add(pane);
-    box(sashHinge, 0.025, 0.16, 0.04, M.steel, sw - 0.09, 0, 0.05); // manopla
-    // braço do servo (atuador) na base do caixilho
-    box(eastWall, 0.12, 0.06, 0.05, M.pcbBlue, servoO.u + 0.25, servoO.v + 0.1, 0.05);
-  }
+  servoCasement(eastWall, servoO);
   anchor('janela', 6.25, FL + servoO.v + 0.35, 0); // parte baixa da janela: não encosta no rótulo do DHT11
 
   // Parede norte (cozinha)
@@ -293,7 +319,8 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   const nO = { u: 8.0, v: 0.9, w: 1.2, h: 1.6 };
   const northWall = placeWall(wall(12, GH, [kitO, nO], M.plaster), '-x', 6.0, -3.5, FL);
   frameOpening(northWall, kitO, { mullions: 1 });
-  frameOpening(northWall, nO);
+  frameOpening(northWall, nO, { glass: false });
+  servoCasement(northWall, nO);                 // 2ª janela do servo (fundos/cozinha)
 
   // Parede oeste
   const wO = { u: 1.0, v: 0.3, w: 2.4, h: 2.5 };
@@ -319,7 +346,20 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   box(root, 11.0, 0.01, 6.0, M.woodFloor, 2.5, UFL + 0.005, -0.5, { cast: false });
   const ribbonO = { u: 1.0, v: 0.8, w: 6.5, h: 1.5 };
   const ufSouth = placeWall(wall(11, UH, [ribbonO], M.darkPlaster), '+x', -3.0, 2.5, UFL);
-  frameOpening(ufSouth, ribbonO, { mullions: 3 });
+  frameOpening(ufSouth, ribbonO, { mullions: 3, glass: false });
+  {
+    // faixa de vidro do andar de cima: painéis 2 e 4 são basculantes do servo (3ª e 4ª janelas), 1 e 3 fixos
+    const pw = ribbonO.w / 4, fw = 0.06, m = 0.0225;
+    for (let i = 0; i < 4; i++) {
+      const u0 = ribbonO.u + i * pw + (i === 0 ? fw : m), u1 = ribbonO.u + (i + 1) * pw - (i === 3 ? fw : m);
+      const v0 = ribbonO.v + fw, v1 = ribbonO.v + ribbonO.h - fw;
+      if (i % 2 === 0) {
+        const p = new THREE.Mesh(new THREE.BoxGeometry(u1 - u0, v1 - v0, 0.02), M.glass);
+        p.position.set((u0 + u1) / 2, (v0 + v1) / 2, T / 2);
+        ufSouth.add(p);
+      } else servoAwning(ufSouth, u0 + 0.01, v0 + 0.01, u1 - u0 - 0.02, v1 - v0 - 0.02);
+    }
+  }
   const bedO = { u: 1.2, v: 0.4, w: 0.9, h: 2.2 };
   const ufEast = placeWall(wall(6, UH, [bedO], M.darkPlaster), '-z', 2.5, 8.0, UFL);
   frameOpening(ufEast, bedO, { sill: false });
@@ -615,34 +655,82 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     car.position.set(7.1, 0.05, 7.4);   // afastado do pilar da garagem (x = 8.15)
     car.scale.setScalar(0.88);
     car.rotation.y = Math.PI; // frente (faróis, +z local) virada para o fundo da garagem
-    box(car, 1.85, 0.62, 4.5, M.carPaint, 0, 0.62, 0, { round: 0.22 });
-    box(car, 1.62, 0.52, 2.5, M.tinted, 0, 1.12, -0.25, { round: 0.25 });
-    for (const [x, z] of [[-0.86, 1.4], [0.86, 1.4], [-0.86, -1.45], [0.86, -1.45]]) {
+    // Carroceria por perfil lateral extrudado (capô, para-brisa, teto, porta-malas e caixas de roda),
+    // cabine de vidro separada e rodas de 5 raios. Frente = +z local.
+    const W = 1.8, ARCH = 0.45;
+    const sideShape = (pts, arches) => {
+      const sh = new THREE.Shape();
+      sh.moveTo(pts[0][0], pts[0][1]);
+      for (const [x, y] of pts.slice(1)) sh.lineTo(x, y);
+      // linha de baixo, de trás para a frente, recortando as caixas de roda (arco por cima da roda)
+      for (const cx of [...arches].sort((p, q) => p - q)) {
+        sh.lineTo(cx - ARCH, 0.34);
+        sh.absarc(cx, 0.34, ARCH, Math.PI, 0, true);
+      }
+      sh.lineTo(pts[0][0], pts[0][1]);
+      return sh;
+    };
+    const extrudeCar = (shape, width, bevel, mat) => {
+      const g = new THREE.ExtrudeGeometry(shape, { depth: width - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 4, curveSegments: 18 });
+      g.rotateY(-Math.PI / 2);                  // comprimento do perfil → eixo z do carro
+      g.translate((width - bevel * 2) / 2, 0, 0);
+      g.computeVertexNormals();
+      const m = shadowed(new THREE.Mesh(g, mat));
+      car.add(m);
+      return m;
+    };
+    // corpo (até a linha de cintura)
+    extrudeCar(sideShape([[2.2, 0.34], [2.26, 0.6], [2.12, 0.8], [1.6, 0.88], [0.95, 0.98], [-1.55, 0.98], [-2.12, 0.92], [-2.27, 0.66], [-2.22, 0.34]], [1.4, -1.45]), W, 0.08, M.carPaint);
+    // cabine (vidros escuros) com para-brisa inclinado e caída do teto em fastback
+    {
+      const c = new THREE.Shape();
+      c.moveTo(0.98, 0.95); c.lineTo(0.18, 1.4); c.lineTo(-0.95, 1.42); c.quadraticCurveTo(-1.55, 1.3, -1.98, 0.95); c.closePath();
+      extrudeCar(c, 1.56, 0.07, M.tinted);
+      // teto na cor da carroceria + colunas
+      const roof = new THREE.Shape();
+      roof.moveTo(0.12, 1.4); roof.lineTo(-0.98, 1.425); roof.quadraticCurveTo(-1.3, 1.39, -1.45, 1.3); roof.lineTo(-1.35, 1.36); roof.lineTo(-0.98, 1.455); roof.lineTo(0.14, 1.445); roof.closePath();
+      extrudeCar(roof, 1.5, 0.03, M.carPaint);
+      for (const sx of [-1, 1]) box(car, 0.03, 0.42, 0.1, M.carPaint, sx * 0.74, 1.17, -0.32, { cast: false }); // coluna B
+    }
+    // para-choques, saia, placas e retrovisores
+    box(car, 1.7, 0.16, 0.12, M.black, 0, 0.42, 2.22, { round: 0.04 });
+    box(car, 1.7, 0.16, 0.12, M.black, 0, 0.44, -2.24, { round: 0.04 });
+    box(car, 1.5, 0.12, 3.0, M.black, 0, 0.32, 0, { cast: false });
+    box(car, 0.46, 0.11, 0.02, M.whitePlastic, 0, 0.6, -2.29, { cast: false });
+    box(car, 0.46, 0.11, 0.02, M.whitePlastic, 0, 0.52, 2.28, { cast: false });
+    for (const sx of [-1, 1]) {
+      box(car, 0.16, 0.08, 0.1, M.carPaint, sx * 0.98, 1.0, 0.82, { round: 0.03 });
+      box(car, 0.02, 0.012, 0.2, M.steel, sx * 0.91, 0.85, -0.2, { cast: false }); // maçaneta
+    }
+    for (const [x, z] of [[-0.8, 1.4], [0.8, 1.4], [-0.8, -1.45], [0.8, -1.45]]) {
       // roda num grupo próprio para girar conforme o carro anda
       const wg = new THREE.Group();
       wg.position.set(x, 0.36, z);
       car.add(wg);
-      const w = cyl(wg, 0.36, 0.36, 0.24, M.rubber, 0, 0, 0, 28);
+      const w = cyl(wg, 0.36, 0.36, 0.26, M.rubber, 0, 0, 0, 32);
       w.rotation.z = Math.PI / 2;
-      const rim = cyl(wg, 0.22, 0.22, 0.25, M.steel, 0, 0, 0, 20);
+      const rim = cyl(wg, 0.24, 0.24, 0.27, M.steel, 0, 0, 0, 24);
       rim.rotation.z = Math.PI / 2;
-      for (let k = 0; k < 5; k++) { // raios: deixam a rotação visível
-        const sp = box(wg, 0.26, 0.05, 0.035, M.frame, 0, 0, 0, { cast: false });
+      const hub = cyl(wg, 0.07, 0.07, 0.28, M.frame, 0, 0, 0, 12);
+      hub.rotation.z = Math.PI / 2;
+      for (let k = 0; k < 5; k++) { // raios escuros: deixam a rotação visível
+        const sp = box(wg, 0.28, 0.06, 0.04, M.frame, Math.sign(x) * 0.02, 0, 0, { cast: false });
         sp.rotation.x = (k / 5) * Math.PI;
       }
       carWheels.push(wg);
     }
-    const head = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.04, 0.02), carHeadMat);
-    head.position.set(0, 0.78, 2.26); car.add(head);
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.05, 0.02), carTailMat);
-    tail.position.set(0, 0.8, -2.26); car.add(tail);
+    // faróis em barra (frente) e lanterna contínua (traseira)
+    const head = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.05, 0.03), carHeadMat);
+    head.position.set(0, 0.79, 2.21); car.add(head);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.06, 0.03), carTailMat);
+    tail.position.set(0, 0.84, -2.21); car.add(tail);
     root.add(car);
   }
 
   // folhagem realista: miolo escuro + centenas de cartões de folhas com recorte alfa
   const leafTex = TX.leafCluster(201);
   const leafTex2 = TX.leafCluster(202, [[0.2, 0.5, 0.3], [0.23, 0.55, 0.24], [0.18, 0.45, 0.36], [0.26, 0.5, 0.2]]);
-  const leafCardMat = [leafTex, leafTex2].map((map) => new THREE.MeshStandardMaterial({ map, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.78 }));
+  const leafCardMat = [leafTex, leafTex2].map((map) => new THREE.MeshStandardMaterial(cutout({ map, side: THREE.DoubleSide, roughness: 0.78 }, 0.45)));
   const cardGeo = new THREE.PlaneGeometry(1, 1);
   const innerMat = std({ color: 0x1f3a1a, roughness: 1 });
   const zAxis = new THREE.Vector3(0, 0, 1);
@@ -739,7 +827,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const geo = mergeGeometries([a, b]);
     const nrm = geo.attributes.normal;
     for (let i = 0; i < nrm.count; i++) nrm.setXYZ(i, 0, 1, 0); // sombreia como o gramado
-    const grassMat = new THREE.MeshStandardMaterial({ map: TX.grassBlades(), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.95 });
+    const grassMat = new THREE.MeshStandardMaterial(cutout({ map: TX.grassBlades(), side: THREE.DoubleSide, roughness: 0.95 }, 0.5));
     const blocked = [[-6.8, 8.9, -4.2, 4.2], [-7.1, 2.0, 3.8, 6.9], [-7.0, -0.1, 7.1, 12], [2.1, 3.9, 3.8, 12], [6.1, 8.8, -4, 12]];
     const ok = (x, z) => !blocked.some(([a, b, c, d]) => x > a && x < b && z > c && z < d);
     const pts = [];
@@ -1051,7 +1139,8 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     S.light = damp(S.light, S.lightT, 5, dt);
     const nightBoost = 0.35 + S.night * 0.65;
     for (const p of pointLights) p.light.intensity = p.base * S.light * nightBoost;
-    for (const m of lightMats) m.emissiveIntensity = S.light * (1.4 + S.night * 5.5);
+    // lâmpadas/fitas: brilho contido à noite (antes chegava a 6,9 e o bloom "estourava")
+    for (const m of lightMats) m.emissiveIntensity = S.light * (1.2 + S.night * 2.2);
     for (const lp of lightPools) lp.mat.opacity = lp.base * S.light * (0.15 + S.night * 0.85);
     M.poolLight.emissiveIntensity = S.light * (1 + S.night * 1.8);
 
@@ -1064,7 +1153,10 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
 
     // janela do servo (V7) — velocidade de servo SG90
     S.win = damp(S.win, S.winT, 3.8, dt);
-    sashHinge.rotation.y = -S.win * THREE.MathUtils.degToRad(82);
+    for (const sh of servoSashes) {
+      if (sh.kind === 'casement') sh.hinge.rotation.y = -S.win * THREE.MathUtils.degToRad(82);
+      else sh.hinge.rotation.x = -S.win * THREE.MathUtils.degToRad(38);
+    }
 
     // alarme
     S.alarm = damp(S.alarm, S.alarmT, 8, dt);
@@ -1174,7 +1266,18 @@ function mergeStatic(root) {
     const mesh = new THREE.Mesh(merged, list[0].material);
     mesh.castShadow = list[0].castShadow;
     mesh.receiveShadow = list[0].receiveShadow;
-    for (const o of list) o.removeFromParent();
+    for (const o of list) {
+      // filhos que NÃO foram juntados (porta, caixilhos do servo, grupos…) mudam para um suporte com a
+      // mesma transformação do pai: continuam no lugar e com os eixos de dobradiça corretos
+      if (o.children.length) {
+        const holder = new THREE.Group();
+        mtx.multiplyMatrices(inv, o.matrixWorld).decompose(holder.position, holder.quaternion, holder.scale);
+        if (isDynamic(o)) holder.userData.dynamic = true;
+        root.add(holder);
+        for (const ch of [...o.children]) holder.add(ch);
+      }
+      o.removeFromParent();
+    }
     root.add(mesh);
     after += 1;
   }

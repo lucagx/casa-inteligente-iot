@@ -12,13 +12,13 @@ const KEYS = {
     top: '#2a3563', horizon: '#f2a06d', bottom: '#3b3552',
     sun: '#ffa35e', sunI: 1.5, sunPos: [28, 6.5, 6],
     hemiSky: '#9187bd', hemiGround: '#3b2e29', hemiI: 0.42,
-    env: 0.34, exposure: 1.0, bloom: 0.5, thr: 1.6,
+    env: 0.34, exposure: 1.0, bloom: 0.36, thr: 1.7,
   },
   night: {
     top: '#02050d', horizon: '#111b33', bottom: '#04070e',
     sun: '#a9c0ff', sunI: 0.85, sunPos: [-14, 25, 12],
     hemiSky: '#2e4274', hemiGround: '#0c0f16', hemiI: 0.32,
-    env: 0.17, exposure: 1.25, bloom: 0.75, thr: 1.0,
+    env: 0.17, exposure: 1.15, bloom: 0.42, thr: 1.25,
   },
 };
 
@@ -124,11 +124,18 @@ export function createAtmosphere(scene, { sun, hemi, renderer, bloomPass, hi }) 
   scene.add(flies);
 
   let night = 0, nightT = 0;
+  let sunHour = null; // modo relógio/manual: posição do sol pela hora (nascente a leste, poente a oeste)
+  const hourSun = new THREE.Vector3();
   const fog = new THREE.Fog(0xd6e5f1, 80, 320);
   scene.fog = fog;
 
   function apply(n) {
     const p = n <= 0.5 ? mix(PAL.day, PAL.dusk, n * 2) : mix(PAL.dusk, PAL.night, (n - 0.5) * 2);
+    if (sunHour !== null && n < 0.75) {
+      const a = Math.PI * (sunHour - 6) / 12;              // 0 = 6h (leste, +x) · π = 18h (oeste)
+      hourSun.set(Math.cos(a) * 28, Math.max(Math.sin(a), 0.14) * 30, 12);
+      p.sunPos.lerp(hourSun, 1 - Math.max(0, (n - 0.45) / 0.3));
+    }
     skyMat.uniforms.top.value.copy(p.top);
     skyMat.uniforms.horizon.value.copy(p.horizon);
     skyMat.uniforms.bottom.value.copy(p.bottom);
@@ -154,6 +161,7 @@ export function createAtmosphere(scene, { sun, hemi, renderer, bloomPass, hi }) 
 
   return {
     setNight(v) { nightT = THREE.MathUtils.clamp(v, 0, 1); },
+    setSunHour(h) { sunHour = h === null ? null : ((h % 24) + 24) % 24; },
     get night() { return night; },
     update(dt, t) {
       night += (nightT - night) * (1 - Math.exp(-1.6 * dt));

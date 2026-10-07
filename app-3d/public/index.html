@@ -67,6 +67,22 @@
       <div class="devices" id="devices"></div>
     </section>
 
+    <section class="skyctl">
+      <div class="h2row">
+        <h2>Céu</h2>
+        <div class="seg" id="skyMode" role="group" aria-label="Dia e noite">
+          <button type="button" data-sky="ldr">LDR</button>
+          <button type="button" data-sky="relogio">Relógio</button>
+          <button type="button" data-sky="manual">Manual</button>
+        </div>
+      </div>
+      <p class="hint" id="skyHint"></p>
+      <div id="skyManual" hidden>
+        <label class="slider" for="skyHour"><span>Hora do dia</span><output id="skyHourV">12:00</output></label>
+        <input type="range" id="skyHour" min="0" max="24" step="0.25" value="12">
+      </div>
+    </section>
+
     <section class="sim" id="sim" hidden>
       <h2>Simular sensores <span class="tagline">sem a placa</span></h2>
       <label class="slider" for="simTemp"><span>Temperatura</span><output id="simTempV">24 °C</output></label>

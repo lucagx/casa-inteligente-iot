@@ -38,7 +38,7 @@ export function garageZone(cm) {
   return { text: 'vaga livre', kind: '' };
 }
 
-export function createUI({ quality, qualityAuto, views, onView, addHotspot, onState, onQuality }) {
+export function createUI({ quality, qualityAuto, views, onView, addHotspot, onState, onQuality, onSky }) {
   const $ = (s) => document.querySelector(s);
   const panel = $('#panel');
   let values = {}, meta = {}, lastStateAt = 0, first = true;
@@ -313,6 +313,37 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
   setQuality(quality, qualityAuto);
 
   // ================================================================
+  // Céu: segue o LDR (padrão), a hora do computador ou uma hora escolhida
+  // ================================================================
+  const skyStore = {
+    get() { try { return JSON.parse(localStorage.getItem('casa3d.ceu') || '{}'); } catch { return {}; } },
+    set(v) { try { localStorage.setItem('casa3d.ceu', JSON.stringify(v)); } catch { /* sem storage */ } },
+  };
+  const sky = Object.assign({ mode: 'ldr', hour: 12 }, skyStore.get());
+  {
+    const q = new URLSearchParams(location.search);
+    if (['ldr', 'relogio', 'manual'].includes(q.get('ceu'))) sky.mode = q.get('ceu');
+    if (q.has('hora')) { sky.hour = Number(q.get('hora')); sky.mode = 'manual'; }
+  }
+  const fmtHour = (h) => `${String(Math.floor(h) % 24).padStart(2, '0')}:${String(Math.round((h % 1) * 60) % 60).padStart(2, '0')}`;
+  const skyHour = $('#skyHour');
+  function applySky(save = true) {
+    document.querySelectorAll('#skyMode button').forEach((b) => b.classList.toggle('on', b.dataset.sky === sky.mode));
+    $('#skyManual').hidden = sky.mode !== 'manual';
+    skyHour.value = sky.hour;
+    $('#skyHourV').textContent = fmtHour(sky.hour);
+    $('#skyHint').textContent = {
+      ldr: 'O céu segue o LDR (A0) da placa: tampe o sensor e a casa anoitece.',
+      relogio: 'O céu segue a hora deste computador; o sol nasce a leste e se põe a oeste.',
+      manual: 'Escolha a hora. Só muda a visualização: a regra da luz continua usando o LDR.',
+    }[sky.mode];
+    if (save) skyStore.set(sky);
+    onSky?.({ ...sky });
+  }
+  $('#skyMode').addEventListener('click', (e) => { const b = e.target.closest('button[data-sky]'); if (b) { sky.mode = b.dataset.sky; applySky(); } });
+  skyHour.addEventListener('input', () => { sky.hour = Number(skyHour.value); applySky(); });
+
+  // ================================================================
   // Layouts: painel (completo) · compacto (faixa com dados) · foco (apresentação)
   // O painel pode ser arrastado pelo cabeçalho; solto perto da borda, encaixa.
   // ================================================================
@@ -455,6 +486,7 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
   let freeTimer = 0;
 
   applyLayout();
+  applySky(false);
 
   return {
     freeRect(dt = 0) {

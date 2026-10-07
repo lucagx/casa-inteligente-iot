@@ -43,6 +43,15 @@ function canvas(size) {
   return c;
 }
 
+// desfoque leve (o próprio canvas faz): tira o serrilhado dos traços antes de virar textura
+function soften(c, px) {
+  const out = canvas(c.width), g = out.getContext('2d');
+  if ('filter' in g) { g.filter = `blur(${px}px)`; }
+  // desenha deslocado nas 9 posições (bordas repetem, textura continua sem emenda)
+  for (const dx of [-c.width, 0, c.width]) for (const dy of [-c.height, 0, c.height]) g.drawImage(c, dx, dy);
+  return out;
+}
+
 function toTexture(c, { repeat = [1, 1], color = true, aniso = 8 } = {}) {
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -57,7 +66,8 @@ function paintField(size, field, colorA, colorB, jitter = 0, seed = 1) {
   const img = g.createImageData(size, size), r = rng(seed);
   const A = new THREE.Color(colorA), B = new THREE.Color(colorB);
   for (let i = 0; i < field.length; i++) {
-    const t = field[i], j = (r() - 0.5) * jitter;
+    // ruído por pixel bem fraco: forte demais vira "granulado" que cintila ao mover a câmera
+    const t = field[i], j = (r() - 0.5) * jitter * 0.2;
     img.data[i * 4] = Math.min(255, Math.max(0, (A.r + (B.r - A.r) * t) * 255 + j));
     img.data[i * 4 + 1] = Math.min(255, Math.max(0, (A.g + (B.g - A.g) * t) * 255 + j));
     img.data[i * 4 + 2] = Math.min(255, Math.max(0, (A.b + (B.b - A.b) * t) * 255 + j));
@@ -93,14 +103,16 @@ export function grass() {
   const f = fbm(size, 6, 6, 31, 0.55);
   const c = paintField(size, f, '#3a5f25', '#6d9a3c', 18, 7);
   const g = c.getContext('2d'), r = rng(77);
-  for (let i = 0; i < 26000; i++) {
-    const x = r() * size, y = r() * size, l = 3 + r() * 7;
+  // menos traços e mais largos: traço de 1 px vira chuvisco quando a textura é vista de longe
+  for (let i = 0; i < 7000; i++) {
+    const x = r() * size, y = r() * size, l = 5 + r() * 9;
     const light = r() > 0.5;
-    g.strokeStyle = light ? `rgba(160,200,90,${0.10 + r() * 0.18})` : `rgba(20,45,15,${0.10 + r() * 0.2})`;
-    g.lineWidth = 0.8 + r() * 0.8;
+    g.strokeStyle = light ? `rgba(150,190,85,${0.08 + r() * 0.12})` : `rgba(25,50,18,${0.08 + r() * 0.14})`;
+    g.lineWidth = 1.6 + r() * 1.4;
+    g.lineCap = 'round';
     g.beginPath(); g.moveTo(x, y); g.lineTo(x + (r() - 0.5) * 3, y - l); g.stroke();
   }
-  return toTexture(c, { repeat: [7, 5] });
+  return toTexture(soften(c, 1.1), { repeat: [7, 5] });
 }
 
 export function soil() {
@@ -150,7 +162,7 @@ function woodGrain(g, x, y, w, h, base, r, vertical) {
   for (let i = 0; i < lines; i++) {
     const dark = r() > 0.4;
     g.strokeStyle = dark ? `rgba(40,22,10,${0.06 + r() * 0.14})` : `rgba(255,230,190,${0.04 + r() * 0.08})`;
-    g.lineWidth = 0.6 + r() * 1.6;
+    g.lineWidth = 1.3 + r() * 1.8;
     g.beginPath();
     if (vertical) {
       let px = x + r() * w;
@@ -180,7 +192,7 @@ export function woodFloor(base = '#b98a5c') {
     g.fillStyle = 'rgba(30,18,8,0.5)';
     g.fillRect(0, row * rh, size, 2);
   }
-  return toTexture(c, { repeat: [3, 3] });
+  return toTexture(soften(c, 0.6), { repeat: [3, 3] });
 }
 
 export function woodBoard(base = '#8a5a36', vertical = false, seed = 71) {
@@ -195,7 +207,7 @@ export function woodBoard(base = '#8a5a36', vertical = false, seed = 71) {
     img.data[i * 4] *= m; img.data[i * 4 + 1] *= m; img.data[i * 4 + 2] *= m;
   }
   g.putImageData(img, 0, 0);
-  return toTexture(c);
+  return toTexture(soften(c, 0.6));
 }
 
 export function waterNormal() {
@@ -246,15 +258,15 @@ export function solarPanel() {
   const grd = g.createLinearGradient(0, 0, size, size);
   grd.addColorStop(0, '#0d1b33'); grd.addColorStop(1, '#16294a');
   g.fillStyle = grd; g.fillRect(0, 0, size, size);
-  g.strokeStyle = 'rgba(190,205,225,0.55)'; g.lineWidth = 3;
+  // só a grade das células (linhas finas extras geravam moiré/chuvisco de longe)
+  g.strokeStyle = 'rgba(170,188,212,0.42)'; g.lineWidth = 5;
   const cols = 6, rows = 10;
   for (let i = 0; i <= cols; i++) { g.beginPath(); g.moveTo(i * size / cols, 0); g.lineTo(i * size / cols, size); g.stroke(); }
   for (let j = 0; j <= rows; j++) { g.beginPath(); g.moveTo(0, j * size / rows); g.lineTo(size, j * size / rows); g.stroke(); }
-  g.strokeStyle = 'rgba(190,205,225,0.18)'; g.lineWidth = 1;
-  for (let i = 0; i < cols; i++) for (let k = 1; k < 4; k++) {
-    const x = (i + k / 4) * size / cols;
-    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, size); g.stroke();
-  }
+  // reflexo suave do céu, dá leitura de vidro
+  const sh = g.createLinearGradient(0, 0, size, size * 0.6);
+  sh.addColorStop(0, 'rgba(160,190,230,0.16)'); sh.addColorStop(0.5, 'rgba(160,190,230,0)'); sh.addColorStop(1, 'rgba(160,190,230,0.06)');
+  g.fillStyle = sh; g.fillRect(0, 0, size, size);
   return toTexture(c);
 }
 

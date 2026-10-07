@@ -46,7 +46,7 @@ const buildTier = tier; // o mundo (luzes, folhagem) é montado uma vez com o pe
 const PROFILE = {
   high: { scale: Math.min(devicePixelRatio || 1, 1.75), msaa: 4, gtao: true, bloom: true, fxaa: false, shadow: 4096, cap: 0 },
   medium: { scale: 1, msaa: 4, gtao: false, bloom: true, fxaa: false, shadow: 2048, cap: 0 },
-  low: { scale: 0.85, msaa: 0, gtao: false, bloom: false, fxaa: true, shadow: 1024, cap: 30 },
+  low: { scale: 0.85, msaa: 0, gtao: false, bloom: false, fxaa: true, shadow: 2048, cap: 30 }, // sombra é estática: mapa maior custa só memória
 };
 
 const stage = document.getElementById('stage');
@@ -270,6 +270,17 @@ const fixedNight = params.get('night');
 const maxFrames = Number(params.get('frames') || 10);
 let frameCount = 0, sinceRender = 0, shadowNight = -1;
 let ui = null;
+// céu: 'ldr' (sensor da placa), 'relogio' (hora do PC) ou 'manual' (hora escolhida)
+let sky = { mode: 'ldr', hour: 12 }, ldrNight = 0, lastSkyHour = -1;
+const nightFromHour = (h) => 1 - THREE.MathUtils.smoothstep(h, 5.2, 7.0) * (1 - THREE.MathUtils.smoothstep(h, 17.3, 19.3));
+function updateSky() {
+  if (sky.mode === 'ldr' || fixedNight !== null) return;
+  const d = new Date();
+  const h = sky.mode === 'relogio' ? d.getHours() + d.getMinutes() / 60 : sky.hour;
+  atmo.setNight(nightFromHour(h));
+  atmo.setSunHour(h);
+  if (Math.abs(h - lastSkyHour) > 0.05) { lastSkyHour = h; shadowDirty = Math.max(shadowDirty, 1); }
+}
 
 function frame() {
   if (shot && frameCount >= maxFrames) { document.body.dataset.done = '1'; return; }
@@ -298,6 +309,7 @@ function frame() {
   controls.update(dt);
 
   if (fixedNight !== null) atmo.setNight(Number(fixedNight));
+  updateSky();
   atmo.update(dt, t);
   world.S.night = atmo.night;
   world.update(dt, t);
@@ -331,6 +343,11 @@ async function init() {
       if (next === 'auto') { p.delete('q'); store.set(null); } else p.set('q', next);
       location.search = p.toString();
     },
+    onSky(cfg) {
+      sky = cfg;
+      if (sky.mode === 'ldr') { atmo.setSunHour(null); if (fixedNight === null) atmo.setNight(ldrNight); }
+      shadowDirty = Math.max(shadowDirty, 1);
+    },
     onState(values, meta, changed) {
       world.setState(values, meta);
       if (changed) world.pulse();
@@ -338,7 +355,8 @@ async function init() {
       let dayness;
       if (Number.isFinite(pct)) dayness = THREE.MathUtils.smoothstep(pct, 12, 68);
       else dayness = values.V6 === 'ESCURO' ? 0.1 : 0.9;
-      if (fixedNight === null) atmo.setNight(1 - dayness);
+      ldrNight = 1 - dayness;
+      if (fixedNight === null && sky.mode === 'ldr') atmo.setNight(ldrNight);
     },
   });
 
