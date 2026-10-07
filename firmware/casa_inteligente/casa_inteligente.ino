@@ -5,10 +5,12 @@
   - NodeMCU ESP8266
   - DHT11
   - Sensor de presenca PIR HC-SR501
+  - LDR (fotorresistor) + resistor de 10k        -> dia/noite
+  - Sensor ultrassonico HC-SR04                  -> distancia do carro na garagem
   - Microservo SG90
   - 2 LEDs com resistores de 220 ohms
   - Buzzer
-  - Botao
+  - Botao (pode ser o proprio botao FLASH da placa, que ja fica no D3)
 
   Pinos virtuais Blynk:
   V0  = luz
@@ -17,10 +19,13 @@
   V3  = modo automatico
   V4  = temperatura
   V5  = umidade
+  V6  = CLARO / ESCURO (LDR)
   V7  = status da janela
   V8  = status do alarme
   V9  = armar/desarmar alarme
+  V10 = luminosidade 0-100 % (LDR)
   V11 = presenca
+  V12 = distancia do carro em cm (HC-SR04)
 */
 
 // Token do Blynk, Wi-Fi e senha do OTA ficam em secrets.h (fora do git).
@@ -28,7 +33,7 @@
 #include "secrets.h"
 
 // Suba este número a cada versão enviada pelo Blynk.Air (formato X.Y.Z)
-#define BLYNK_FIRMWARE_VERSION "1.0.0"
+#define BLYNK_FIRMWARE_VERSION "1.1.0"
 #define BLYNK_PRINT Serial
 
 #include <ESP8266WiFi.h>
@@ -39,11 +44,14 @@
 // Pinagem do NodeMCU
 #define PIN_DHT        D2
 #define PIN_PIR        D5
-#define PIN_BOTAO      D6
+#define PIN_BOTAO      D3   // GPIO0 = botao FLASH da placa (nao segurar ao ligar)
 #define PIN_SERVO      D7
 #define PIN_LED_LUZ    D1
 #define PIN_LED_PORTA  D0
 #define PIN_BUZZER     D8
+#define PIN_LDR        A0   // divisor: 3V3 -- LDR -- A0 -- 10k -- GND
+#define PIN_TRIG       D4   // HC-SR04 TRIG
+#define PIN_ECHO       D6   // HC-SR04 ECHO via divisor (1k do ECHO ao D6, 2k do D6 ao GND)
 
 #define TIPO_DHT DHT11
 
@@ -58,6 +66,17 @@ const unsigned long DURACAO_ALARME_MS = 4000;
 const unsigned long INTERVALO_DHT_MS = 2500;
 const unsigned long DEBOUNCE_BOTAO_MS = 50;
 
+// LDR: abaixo deste percentual o ambiente e considerado escuro
+const int LIMIAR_ESCURO_PCT = 35;
+const unsigned long INTERVALO_LDR_MS = 1000;
+// true: no modo automatico a luz acende com presenca SOMENTE no escuro
+// false: volta ao comportamento anterior (luz acompanha a presenca sempre)
+const bool LUZ_SO_NO_ESCURO = true;
+
+// HC-SR04: leitura da garagem
+const unsigned long INTERVALO_DISTANCIA_MS = 300;
+const int DISTANCIA_MAX_CM = 200;
+
 bool modoAutomatico = true;
 bool alarmeArmado = false;
 bool alarmeTocando = false;
@@ -67,6 +86,9 @@ bool portaDestrancada = false;
 int anguloJanela = 0;
 float ultimaTemperatura = NAN;
 float ultimaUmidade = NAN;
+int luminosidadePct = 100;
+bool escuro = false;
+int distanciaCarroCm = -1;
 
 bool ultimaLeituraBotao = HIGH;
 bool estadoEstavelBotao = HIGH;
@@ -74,6 +96,8 @@ unsigned long instanteMudancaBotao = 0;
 unsigned long alarmeLigadoDesde = 0;
 unsigned long proximaLeituraDht = 0;
 unsigned long proximaReconexao = 0;
+unsigned long proximaLeituraLdr = 0;
+unsigned long proximaMedicaoDistancia = 0;
 
 void publicarEstados() {
   if (!Blynk.connected()) return;
@@ -86,6 +110,9 @@ void publicarEstados() {
                              (alarmeArmado ? "ARMADO" : "DESARMADO"));
   Blynk.virtualWrite(V9, alarmeArmado);
   Blynk.virtualWrite(V11, presenca);
+  Blynk.virtualWrite(V6, escuro ? "ESCURO" : "CLARO");
+  Blynk.virtualWrite(V10, luminosidadePct);
+  if (distanciaCarroCm >= 0) Blynk.virtualWrite(V12, distanciaCarroCm);
 }
 
 void controlarLuz(bool ligar) {
@@ -93,6 +120,13 @@ void controlarLuz(bool ligar) {
   digitalWrite(PIN_LED_LUZ, ligar ? HIGH : LOW);
   if (Blynk.connected()) Blynk.virtualWrite(V0, ligar);
   Serial.printf("[LUZ] %s\n", ligar ? "LIGADA" : "DESLIGADA");
+}
+
+// Regra automatica da luz: presenca (PIR) e, se LUZ_SO_NO_ESCURO, ambiente escuro (LDR)
+void atualizarLuzAutomatica() {
+  if (!modoAutomatico) return;
+  bool desejada = presenca && (!LUZ_SO_NO_ESCURO || escuro);
+  if (desejada != luzLigada) controlarLuz(desejada);
 }
 
 void controlarPorta(bool destrancar) {
@@ -181,8 +215,8 @@ void verificarPresenca() {
 
     if (Blynk.connected()) Blynk.virtualWrite(V11, presenca);
 
-    // No modo automatico, a luz acompanha o sensor de presenca.
-    if (modoAutomatico) controlarLuz(presenca);
+    // No modo automatico, a luz acompanha a presenca (e o escuro, ver LUZ_SO_NO_ESCURO).
+    atualizarLuzAutomatica();
   }
 
   if (alarmeArmado && presenca) dispararAlarme();
@@ -224,6 +258,40 @@ void lerTemperaturaUmidade() {
   }
 }
 
+void lerLuminosidade() {
+  int leitura = analogRead(PIN_LDR);                 // 0-1023
+  int pct = constrain(map(leitura, 0, 1023, 0, 100), 0, 100);
+  bool escuroAgora = pct < LIMIAR_ESCURO_PCT;
+
+  if (abs(pct - luminosidadePct) >= 2) {             // ignora ruido do LDR
+    luminosidadePct = pct;
+    if (Blynk.connected()) Blynk.virtualWrite(V10, luminosidadePct);
+  }
+  if (escuroAgora != escuro) {
+    escuro = escuroAgora;
+    Serial.printf("[LDR] %d %% - %s\n", pct, escuro ? "ESCURO" : "CLARO");
+    if (Blynk.connected()) Blynk.virtualWrite(V6, escuro ? "ESCURO" : "CLARO");
+    atualizarLuzAutomatica();
+  }
+}
+
+void medirDistancia() {
+  digitalWrite(PIN_TRIG, LOW);
+  delayMicroseconds(2);
+  digitalWrite(PIN_TRIG, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(PIN_TRIG, LOW);
+
+  unsigned long duracao = pulseIn(PIN_ECHO, HIGH, 25000UL);   // ~4 m de alcance
+  int cm = duracao == 0 ? DISTANCIA_MAX_CM
+                        : constrain((int)(duracao * 0.0343 / 2.0), 2, DISTANCIA_MAX_CM);
+
+  if (distanciaCarroCm < 0 || abs(cm - distanciaCarroCm) >= 2) {   // publica so na mudanca
+    distanciaCarroCm = cm;
+    if (Blynk.connected()) Blynk.virtualWrite(V12, distanciaCarroCm);
+  }
+}
+
 BLYNK_CONNECTED() {
   Serial.println("[BLYNK] conectado");
   Blynk.syncVirtual(V3, V9);
@@ -248,6 +316,7 @@ BLYNK_WRITE(V2) {
 BLYNK_WRITE(V3) {
   modoAutomatico = param.asInt() == 1;
   Serial.printf("[MODO] %s\n", modoAutomatico ? "AUTOMATICO" : "MANUAL");
+  atualizarLuzAutomatica();
 }
 
 BLYNK_WRITE(V9) {
@@ -300,6 +369,9 @@ void setup() {
   pinMode(PIN_LED_LUZ, OUTPUT);
   pinMode(PIN_LED_PORTA, OUTPUT);
   pinMode(PIN_BUZZER, OUTPUT);
+  pinMode(PIN_TRIG, OUTPUT);
+  pinMode(PIN_ECHO, INPUT);
+  digitalWrite(PIN_TRIG, LOW);
 
   digitalWrite(PIN_LED_LUZ, LOW);
   digitalWrite(PIN_LED_PORTA, LOW);
@@ -320,6 +392,16 @@ void loop() {
   manterConexao();
   verificarBotao();
   verificarPresenca();
+
+  if (millis() >= proximaLeituraLdr) {
+    proximaLeituraLdr = millis() + INTERVALO_LDR_MS;
+    lerLuminosidade();
+  }
+
+  if (millis() >= proximaMedicaoDistancia) {
+    proximaMedicaoDistancia = millis() + INTERVALO_DISTANCIA_MS;
+    medirDistancia();
+  }
 
   if (millis() >= proximaLeituraDht) {
     proximaLeituraDht = millis() + INTERVALO_DHT_MS;
