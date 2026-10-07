@@ -4,3 +4,9 @@ node_modules/
 .DS_Store
 Thumbs.db
 ~$*.docx
+
+# firmware: credenciais e saída da compilação
+secrets.h
+build/
+# cópias soltas de .ino na raiz de firmware/ (o sketch vive em firmware/casa_inteligente/)
+firmware/*.ino

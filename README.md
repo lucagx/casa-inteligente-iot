@@ -1,17 +1,29 @@
 # Mini Casa Inteligente — IoT + IoB
 
 Projeto final de **Internet das Coisas e do Comportamento** (FEPI · Sistemas de Informação).
-ESP32-S3 com sensores e atuadores, controlado pelo Blynk, simulado no Wokwi e espelhado
-em tempo real por um gêmeo digital 3D.
+NodeMCU ESP8266 com sensores e atuadores, controlado pelo Blynk e espelhado em tempo real
+por um gêmeo digital 3D.
 
 ```
 app-3d/      Casa 3D + servidor ponte com o Blynk (Node.js, three.js)
-firmware/    Código do ESP32-S3 em uso (a adicionar)
-wokwi/       diagram.json e libraries.txt do simulador
+firmware/    Firmware do NodeMCU ESP8266 (credenciais em secrets.h, fora do git)
+scripts/     Tarefas do VS Code: instalar, gravar USB, gravar Wi-Fi, gerar .bin
+wokwi/       diagram.json e libraries.txt do simulador (versão ESP32-S3, referência)
 docs/        Relatório, documento inicial, guia de testes, capturas de tela
 ```
 
-## Rodar a casa 3D
+## Primeira vez em um PC
+
+1. Abra a pasta no VS Code.
+2. `Ctrl+Shift+P` → *Tasks: Run Task* → **ESP8266: instalar ferramentas**.
+3. Preencha `firmware/casa_inteligente/secrets.h` (token do Blynk, Wi-Fi, senha do OTA).
+4. Placa no USB → `Ctrl+Shift+B` (**ESP8266: gravar pela USB**).
+
+Detalhes, pinagem e atualização pelo Wi-Fi: [`firmware/README.md`](firmware/README.md).
+
+## Casa 3D
+
+Tarefa **Casa 3D: iniciar**, ou:
 
 ```bash
 cd app-3d
@@ -19,19 +31,7 @@ npm install
 npm start          # http://localhost:3000
 ```
 
-Sem `.env`, abre em **modo demonstração** (sensores simulados). Para ligar ao ESP32 real ou ao
-Wokwi, copie `app-3d/.env.example` para `app-3d/.env` e preencha `BLYNK_TOKEN` e `BLYNK_SERVER`.
+Sem `app-3d/.env` abre em **modo demonstração**. Para espelhar a placa, copie
+`app-3d/.env.example` para `app-3d/.env` e preencha `BLYNK_TOKEN` e `BLYNK_SERVER`.
 
-## Firmware
-
-`firmware/casa_inteligente/casa_inteligente.ino`. No topo do arquivo:
-
-| Chave | Valor | Uso |
-|---|---|---|
-| `NO_WOKWI` | `1` / `0` | simulador / placa real |
-| `USAR_BLYNK` | `0` / `1` | só circuito (comandos pelo Monitor Serial) / conectado ao Blynk |
-
-Pinos: DHT22 GPIO4 · LDR GPIO1 · HC-SR04 GPIO5/6 · Servo GPIO7 · LED luz GPIO15 · LED porta GPIO16 · Buzzer GPIO17.
-Pinos virtuais do Blynk: V0–V11 (tabela completa em `docs/Guia_Testes_Wokwi_Blynk.docx`).
-
-> Não faça commit do `.env` nem de um firmware com o token real. O `.gitignore` já ignora o `.env`.
+> Nunca faça commit de `secrets.h` nem de `.env` (o `.gitignore` já ignora os dois).

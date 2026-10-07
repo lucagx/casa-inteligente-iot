@@ -1,0 +1,70 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ESP8266: gravar pela USB",
+      "detail": "Compila e envia para o NodeMCU conectado na USB",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\gravar-usb.ps1"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP8266: gravar pelo Wi-Fi (mesma rede)",
+      "detail": "ArduinoOTA: PC e placa na mesma rede Wi-Fi",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\gravar-wifi.ps1", "-Destino", "${input:destinoOta}"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP8266: gerar .bin para o Blynk.Air",
+      "detail": "Para atualizar pela internet (ex.: placa no Wi-Fi do celular)",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\gerar-bin.ps1"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP8266: compilar",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\compilar.ps1"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP8266: monitor serial",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\monitor.ps1"],
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP8266: instalar ferramentas",
+      "detail": "Rodar uma vez em cada PC: arduino-cli, core ESP8266 e bibliotecas",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}\\scripts\\instalar.ps1"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Casa 3D: iniciar",
+      "type": "shell",
+      "command": "npm install --no-audit --no-fund; npm start",
+      "options": { "cwd": "${workspaceFolder}\\app-3d" },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "destinoOta",
+      "type": "promptString",
+      "description": "Endereço da placa na rede (nome .local ou IP mostrado no Monitor Serial)",
+      "default": "casa-inteligente.local"
+    }
+  ]
+}
