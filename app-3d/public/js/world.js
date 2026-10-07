@@ -15,6 +15,7 @@ const T = 0.25;           // espessura das paredes
 
 const damp = (cur, target, lambda, dt) => cur + (target - cur) * (1 - Math.exp(-lambda * dt));
 
+// quality: 'high' | 'medium' | 'low' (ver main.js → perfis de qualidade)
 export function buildWorld(scene, { quality = 'high' } = {}) {
   const hi = quality === 'high';
   const root = new THREE.Group();
@@ -60,7 +61,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     pcbBlue: std({ color: 0x1b4f9c, roughness: 0.55 }),
     pcbGreen: std({ color: 0x1f6b3a, roughness: 0.55 }),
     dhtBlue: std({ color: 0x3d8fe0, roughness: 0.5 }),
-    fresnel: new THREE.MeshPhysicalMaterial({ color: 0xf4f4f0, roughness: 0.35, transmission: 0.3, thickness: 0.05 }),
+    fresnel: std({ color: 0xf4f4f0, roughness: 0.35 }), // sem transmissão: ela obriga a renderizar a cena 2×
     trimpot: std({ color: 0xe8a33a, roughness: 0.5 }),
     gold: std({ color: 0xd9b25a, metalness: 1, roughness: 0.3 }),
     carPaint: new THREE.MeshPhysicalMaterial({ color: 0x1d2b3c, metalness: 0.8, roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.08 }),
@@ -166,16 +167,31 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   }
 
   const lightMats = [M.lampShade, M.ledStrip, M.downlight, M.bollard];
+  // "Poças de luz": círculos aditivos no chão que imitam o facho de um spot sem custo de luz real
+  const poolTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d');
+    const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+    grd.addColorStop(0.7, 'rgba(255,255,255,0.15)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, 128, 128);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+  })();
+  const lightPools = []; // { mat, base }
+  function lightPool(color, x, y, z, rx, rz = rx, base = 0.55) {
+    const mat = new THREE.MeshBasicMaterial({ map: poolTex, color, transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -4, toneMapped: true });
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(rx * 2, rz * 2), mat);
+    m.rotation.x = -Math.PI / 2; m.position.set(x, y, z); m.renderOrder = 2;
+    root.add(m);
+    lightPools.push({ mat, base });
+  }
   const pointLights = []; // { light, base }
-  function addPoint(color, intensity, dist, x, y, z, shadow = false) {
+  // Luzes pontuais custam em TODO pixel de TODO material padrão, mesmo apagadas,
+  // por isso são poucas e nenhuma projeta sombra (sombra de luz pontual = 6 renders extras da cena).
+  function addPoint(color, intensity, dist, x, y, z) {
     const l = new THREE.PointLight(color, 0, dist, 2);
     l.position.set(x, y, z);
-    if (shadow && hi) {
-      l.castShadow = true;
-      l.shadow.mapSize.set(512, 512);
-      l.shadow.bias = -0.002;
-      l.shadow.radius = 3;
-    }
     root.add(l);
     pointLights.push({ light: l, base: intensity });
     return l;
@@ -215,6 +231,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
 
   // Folha da porta (pivotada na dobradiça)
   const doorHinge = new THREE.Group();
+  doorHinge.userData.dynamic = true;
   doorHinge.position.set(doorO.u + 0.07, 0, T * 0.62);
   southWall.add(doorHinge);
   const leafW = doorO.w - 0.14, leafH = doorO.h - 0.075;
@@ -253,6 +270,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   const eastWall = placeWall(wall(7, GH, [servoO], M.plaster), '-z', 3.5, 6.0, FL);
   frameOpening(eastWall, servoO, { glass: false, depth: T + 0.03 });
   const sashHinge = new THREE.Group();
+  sashHinge.userData.dynamic = true;
   sashHinge.position.set(servoO.u + 0.06, servoO.v + servoO.h / 2, T - 0.03);
   eastWall.add(sashHinge);
   {
@@ -589,6 +607,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
 
   // carro elétrico — entra de frente na garagem; a posição vem do HC-SR04 (V12)
   const car = new THREE.Group();
+  car.userData.dynamic = true;
   const carWheels = [];
   const carHeadMat = std({ color: 0xffffff, emissive: 0xdfefff, emissiveIntensity: 0.25 });
   const carTailMat = std({ color: 0x550000, emissive: 0xff2030, emissiveIntensity: 0.8 });
@@ -675,6 +694,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
       g.add(br);
     }
     const crown = new THREE.Group();
+    crown.userData.dynamic = true;
     crown.position.y = 2.6 * s;
     const blobs = [[0, 0.9, 0, 1.45], [0.9, 0.5, 0.3, 1.05], [-0.8, 0.55, -0.35, 1.1], [0.2, 0.4, -0.95, 0.95], [-0.25, 0.45, 0.95, 1.0], [0.1, 1.7, 0.1, 0.95]]
       .map(([bx, by, bz, r]) => [bx * s, by * s, bz * s, r * s]);
@@ -826,7 +846,8 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     box(g, 0.03, 0.02, 0.01, M.steel, 0, 0.75, 0.08); // cristal
     parkMats.forEach((m, i) => box(g, 0.08, 0.08, 0.04, m, (i - 1) * 0.1, 1.05, 0.07, { cast: false }));
     sonarBeam = new THREE.Mesh(new THREE.ConeGeometry(0.45, 1, 24, 1, true), sonarMat);
-    sonarBeam.rotation.x = -Math.PI / 2;  // ponta no sensor, abre em direção ao carro
+    sonarBeam.rotation.x = -Math.PI / 2;
+    sonarBeam.userData.dynamic = true;  // ponta no sensor, abre em direção ao carro
     g.add(sonarBeam);
     anchor('garagem', 7.1, 1.45, SONAR_Z);
   }
@@ -868,6 +889,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     r.position.copy(antennaTip);
     r.rotation.x = Math.PI / 2;
     root.add(r);
+    r.userData.dynamic = true;
     rings.push({ mesh: r, t: i / 3 });
   }
 
@@ -881,13 +903,26 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     root.add(dome);
     anchor('alarme', beaconPos.x, beaconPos.y + 0.45, beaconPos.z);
   }
-  const alarmSpot = new THREE.SpotLight(0xff2340, 0, 40, 0.45, 0.6, 1.2);
-  alarmSpot.position.copy(beaconPos);
-  root.add(alarmSpot);
-  root.add(alarmSpot.target);
-  const alarmPoint = new THREE.PointLight(0xff2340, 0, 12, 2);
-  alarmPoint.position.copy(beaconPos).add(new THREE.Vector3(0, 0.3, 0.3));
+  // As luzes do alarme ficam ACIMA da cúpula, longe de qualquer superfície. Antes o spot ficava
+  // dentro da sirene: a ~3 cm da base a intensidade estourava o buffer HDR (meia precisão, máx. 65504),
+  // virava Infinito/NaN e o bloom espalhava o NaN pela tela inteira → cena preta durante o alarme.
+  let alarmSpot = null;
+  if (hi) {
+    alarmSpot = new THREE.SpotLight(0xff2340, 0, 40, 0.45, 0.6, 1.2);
+    alarmSpot.position.copy(beaconPos).add(new THREE.Vector3(0, 0.6, 0));
+    root.add(alarmSpot);
+    root.add(alarmSpot.target);
+  }
+  const alarmPoint = new THREE.PointLight(0xff2340, 0, 14, 2);
+  alarmPoint.position.copy(beaconPos).add(new THREE.Vector3(0, 0.8, 0.6));
   root.add(alarmPoint);
+  // sem o spot (qualidades média/leve), uma poça vermelha varre o jardim no mesmo caminho do facho
+  const alarmGlow = new THREE.MeshBasicMaterial({ map: poolTex, color: 0xff2340, transparent: true, opacity: 0, depthWrite: false,
+    blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -4 });
+  const sweep = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), alarmGlow);
+  sweep.rotation.x = -Math.PI / 2; sweep.renderOrder = 2; sweep.visible = !hi;
+  sweep.userData.dynamic = true;
+  root.add(sweep);
 
   // Holograma de presença na entrada (aparece quando o PIR detecta movimento)
   const holoMat = new THREE.ShaderMaterial({
@@ -901,6 +936,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
         float a = (f*1.2+0.12)*scan*uOpacity; gl_FragColor = vec4(uColor*(0.6+f*1.4), a); }`,
   });
   const holo = new THREE.Group();
+  holo.userData.dynamic = true;
   holo.position.set(3.0, 0.08, 5.3);
   holo.rotation.y = Math.PI;
   {
@@ -924,18 +960,25 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // ================================================================
   // Luzes internas/externas (ligadas ao V0)
   // ================================================================
-  addPoint(0xffb86b, 34, 10, -3.0, 2.9, 1.3, true);  // sala
+  addPoint(0xffb86b, 34, 10, -3.0, 2.9, 1.3);        // sala
   addPoint(0xffc98a, 26, 9, 2.6, 2.8, -1.2);          // jantar/cozinha
   addPoint(0xffb86b, 26, 8, 2.0, UFL + 2.5, -0.8);    // superior (quarto/escritório)
-  addPoint(0xffc27a, 10, 7, 3.0, 0.9, 7.6);           // caminho
-  addPoint(0x46dcff, 10, 6, -3.6, 0.35, 8.9);         // piscina
-  // fachos dos spots do beiral (luz arquitetônica sobre deck, entrada e garagem)
-  for (const [x, z, tx, tz] of [[-4.8, 3.72, -4.8, 5.2], [-0.4, 3.72, -0.4, 5.2], [3.0, 3.72, 3.0, 4.9], [7.2, 3.72, 7.2, 2.2]]) {
-    const sp = new THREE.SpotLight(0xffc88a, 0, 9, 0.62, 0.85, 2);
-    sp.position.set(x, SLAB0 - 0.02, z);
-    sp.target.position.set(tx, 0, tz);
-    root.add(sp, sp.target);
-    pointLights.push({ light: sp, base: 60 });
+  // área externa: só a qualidade alta usa luzes reais; as outras usam poças de luz (mesmo visual, custo ~zero)
+  const eaves = [[-4.8, 3.72, -4.8, 5.2, 0.12], [-0.4, 3.72, -0.4, 5.2, 0.12], [3.0, 3.72, 3.0, 4.9, 0.09], [7.2, 3.72, 7.2, 2.2, 0.09]];
+  if (hi) {
+    addPoint(0xffc27a, 10, 7, 3.0, 0.9, 7.6);         // caminho
+    addPoint(0x46dcff, 10, 6, -3.6, 0.35, 8.9);       // piscina
+    for (const [x, z, tx, tz] of eaves) {
+      const sp = new THREE.SpotLight(0xffc88a, 0, 9, 0.62, 0.85, 2);
+      sp.position.set(x, SLAB0 - 0.02, z);
+      sp.target.position.set(tx, 0, tz);
+      root.add(sp, sp.target);
+      pointLights.push({ light: sp, base: 60 });
+    }
+  } else {
+    for (const [, , tx, tz, y] of eaves) lightPool(0xffc88a, tx, y + 0.01, tz, 1.9, 1.9, 0.5);
+    lightPool(0xffc27a, 3.0, 0.08, 7.6, 2.4, 3.2, 0.32);    // caminho
+    lightPool(0x46dcff, -3.6, 0.13, 8.9, 3.4, 1.9, 0.35);   // piscina
   }
 
   // ================================================================
@@ -1009,7 +1052,11 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const nightBoost = 0.35 + S.night * 0.65;
     for (const p of pointLights) p.light.intensity = p.base * S.light * nightBoost;
     for (const m of lightMats) m.emissiveIntensity = S.light * (1.4 + S.night * 5.5);
+    for (const lp of lightPools) lp.mat.opacity = lp.base * S.light * (0.15 + S.night * 0.85);
     M.poolLight.emissiveIntensity = S.light * (1 + S.night * 1.8);
+
+    // sombras só são recalculadas quando algo que projeta sombra se move (ver main.js)
+    S.moving = Math.abs(S.door - S.doorT) > 1e-3 || Math.abs(S.win - S.winT) > 1e-3 || Math.abs(S.gap - S.gapT) > 1e-3;
 
     // porta (V1) — abre para dentro
     S.door = damp(S.door, S.doorT, 3.2, dt);
@@ -1025,9 +1072,15 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     beaconMat.emissiveIntensity = S.alarm > 0.02
       ? 0.6 + strobe * 5 * S.alarm
       : (S.armed ? 0.25 + (Math.sin(t * 2.5) > 0.6 ? 1.6 : 0) : 0.12);
-    alarmSpot.intensity = S.alarm * 900;
-    alarmPoint.intensity = S.alarm * (6 + strobe * 14);
-    alarmSpot.target.position.set(beaconPos.x + Math.cos(t * 3.2) * 9, 0, beaconPos.z + 4 + Math.sin(t * 3.2) * 7);
+    if (alarmSpot) {
+      alarmSpot.intensity = S.alarm * 600;
+      alarmSpot.target.position.set(beaconPos.x + Math.cos(t * 3.2) * 9, 0, beaconPos.z + 4 + Math.sin(t * 3.2) * 7);
+    }
+    alarmPoint.intensity = S.alarm * (8 + strobe * 16);
+    if (sweep.visible) {
+      sweep.position.set(beaconPos.x + Math.cos(t * 3.2) * 9, 0.16, beaconPos.z + 4 + Math.sin(t * 3.2) * 7);
+      alarmGlow.opacity = S.alarm * (0.35 + strobe * 0.5);
+    }
 
     // presença
     S.presence = damp(S.presence, S.presenceT, 4, dt);
@@ -1083,5 +1136,47 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     void tmpV;
   }
 
-  return { root, anchors, setState, update, pulse, S, beaconPos, bounds: { LW, LD } };
+  const stats = mergeStatic(root);
+
+  return { root, anchors, setState, update, pulse, S, beaconPos, bounds: { LW, LD }, stats };
+}
+
+// ------------------------------------------------------------------
+// Junta tudo o que é estático num mesh por material.
+// A casa tem ~650 peças; cada uma era uma chamada de desenho (e de novo em cada passada de sombra).
+// Depois de juntar, sobram poucas dezenas — é a maior economia para placa de vídeo integrada.
+// Objetos que se movem (porta, janela, carro, copas…) ficam de fora via userData.dynamic.
+// ------------------------------------------------------------------
+function mergeStatic(root) {
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+  const groups = new Map();
+  const isDynamic = (o) => { for (let p = o; p && p !== root; p = p.parent) if (p.userData.dynamic) return true; return false; };
+  root.traverse((o) => {
+    if (!o.isMesh || o.isInstancedMesh || o.isSkinnedMesh || !o.visible || o.renderOrder !== 0) return;
+    const m = o.material;
+    if (Array.isArray(m) || m.transparent || !o.geometry.attributes.normal || isDynamic(o)) return;
+    const g = o.geometry;
+    const attrs = Object.keys(g.attributes).sort().join(',');
+    const key = `${m.uuid}|${o.castShadow}|${o.receiveShadow}|${g.index ? 'i' : 'n'}|${attrs}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(o);
+  });
+  let before = 0, after = 0;
+  const mtx = new THREE.Matrix4();
+  for (const list of groups.values()) {
+    before += list.length;
+    if (list.length < 2) { after += list.length; continue; }
+    const geos = list.map((o) => { mtx.multiplyMatrices(inv, o.matrixWorld); return o.geometry.clone().applyMatrix4(mtx); });
+    const merged = mergeGeometries(geos, false);
+    geos.forEach((g) => g.dispose());
+    if (!merged) { after += list.length; continue; }
+    const mesh = new THREE.Mesh(merged, list[0].material);
+    mesh.castShadow = list[0].castShadow;
+    mesh.receiveShadow = list[0].receiveShadow;
+    for (const o of list) o.removeFromParent();
+    root.add(mesh);
+    after += 1;
+  }
+  return { before, after };
 }

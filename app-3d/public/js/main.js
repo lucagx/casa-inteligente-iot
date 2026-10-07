@@ -6,29 +6,63 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { FXAAPass } from 'three/addons/postprocessing/FXAAPass.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { buildWorld } from './world.js';
 import { createAtmosphere } from './atmosphere.js';
 import { createUI } from './ui.js';
 
 // ---------- qualidade ----------
+// Três perfis. O "auto" escolhe pela placa de vídeo e ainda rebaixa sozinho se o FPS cair.
+//   alta  : AO (GTAO), bloom, MSAA 4×, sombra 4096, luzes externas reais, folhagem cheia
+//   média : bloom, MSAA 4×, sombra 2048, resolução 1×, sem AO   (GPU integrada recente)
+//   leve  : FXAA, sombra 1024, resolução 0,85×, 30 FPS, sem bloom/AO (GPU integrada antiga, celular)
 const params = new URLSearchParams(location.search);
 const coarse = matchMedia('(pointer: coarse)').matches || innerWidth < 820;
-const quality = params.get('q') || (coarse ? 'low' : 'high');
-const hi = quality === 'high';
+const TIERS = ['high', 'medium', 'low'];
+const store = {
+  get() { try { return localStorage.getItem('casa3d.qualidade'); } catch { return null; } },
+  set(v) { try { v ? localStorage.setItem('casa3d.qualidade', v) : localStorage.removeItem('casa3d.qualidade'); } catch { /* sem storage */ } },
+};
+function detectTier() {
+  if (coarse) return 'low';
+  try {
+    const c = document.createElement('canvas');
+    const gl = c.getContext('webgl2') || c.getContext('webgl');
+    if (!gl) return 'low';
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)).toLowerCase();
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    if (/swiftshader|llvmpipe|software|basic render/.test(name)) return 'low';
+    if (/nvidia|geforce|rtx|gtx|quadro|radeon (rx|pro)|arc\(tm\) a|apple m\d/.test(name)) return 'high';
+    if (/intel.*hd graphics( [2-5]\d{2,3}\b|\s*\(|$)|gma/.test(name)) return 'low'; // Intel HD 2000–5xxx (até ~2015)
+    return 'medium'; // Intel UHD / Iris Xe, Radeon integrada (Vega), desconhecida
+  } catch { return 'medium'; }
+}
+const asked = params.get('q');
+const qualityAuto = !TIERS.includes(asked);
+let tier = qualityAuto ? (TIERS.includes(store.get()) ? store.get() : detectTier()) : asked;
+const buildTier = tier; // o mundo (luzes, folhagem) é montado uma vez com o perfil inicial
+const PROFILE = {
+  high: { scale: Math.min(devicePixelRatio || 1, 1.75), msaa: 4, gtao: true, bloom: true, fxaa: false, shadow: 4096, cap: 0 },
+  medium: { scale: 1, msaa: 4, gtao: false, bloom: true, fxaa: false, shadow: 2048, cap: 0 },
+  low: { scale: 0.85, msaa: 0, gtao: false, bloom: false, fxaa: true, shadow: 1024, cap: 30 },
+};
 
 const stage = document.getElementById('stage');
 const W = () => stage.clientWidth, H = () => stage.clientHeight;
-const dpr = Math.min(devicePixelRatio || 1, hi ? 2 : 1.5);
+const loaderText = document.querySelector('#loader p');
+const step = (msg) => new Promise((r) => { if (loaderText) loaderText.textContent = msg; requestAnimationFrame(() => setTimeout(r, 0)); });
 
 // ---------- renderer ----------
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', preserveDrawingBuffer: params.has('shot') });
-renderer.setPixelRatio(dpr);
 renderer.setSize(W(), H());
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
+// sombra sob demanda: só é recalculada quando o sol muda ou algo se move (porta, janela, carro)
+renderer.shadowMap.autoUpdate = false;
 stage.appendChild(renderer.domElement);
 
 const labels = new CSS2DRenderer();
@@ -40,6 +74,7 @@ stage.appendChild(labels.domElement);
 const scene = new THREE.Scene();
 const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+pmrem.dispose();
 
 const camera = new THREE.PerspectiveCamera(34, W() / H(), 0.1, 1200);
 camera.position.set(70, 42, 86);
@@ -56,7 +91,6 @@ controls.autoRotateSpeed = 0.35;
 // luz do sol / lua
 const sun = new THREE.DirectionalLight(0xffffff, 3);
 sun.castShadow = true;
-sun.shadow.mapSize.set(hi ? 4096 : 2048, hi ? 4096 : 2048);
 Object.assign(sun.shadow.camera, { left: -22, right: 22, top: 22, bottom: -22, near: 1, far: 110 });
 sun.shadow.bias = -0.0003;
 sun.shadow.normalBias = 0.025;
@@ -66,27 +100,60 @@ const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.8);
 scene.add(hemi);
 
 // ---------- pós-processamento ----------
-const rt = new THREE.WebGLRenderTarget(W() * dpr, H() * dpr, { type: THREE.HalfFloatType, samples: hi ? 4 : 2 });
+const rt = new THREE.WebGLRenderTarget(W(), H(), { type: THREE.HalfFloatType, samples: 4 });
 const composer = new EffectComposer(renderer, rt);
-composer.setPixelRatio(dpr);
-composer.setSize(W(), H());
 composer.addPass(new RenderPass(scene, camera));
-let gtao = null;
-if (hi) {
-  gtao = new GTAOPass(scene, camera, W(), H());
-  gtao.blendIntensity = 0.85;
-  gtao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.6, thickness: 1.2, scale: 1.1, samples: 16 });
-  gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
-  composer.addPass(gtao);
-}
+const gtao = new GTAOPass(scene, camera, W(), H());
+gtao.blendIntensity = 0.85;
+gtao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.6, thickness: 1.2, scale: 1.1, samples: 12 });
+gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
+composer.addPass(gtao);
 const bloom = new UnrealBloomPass(new THREE.Vector2(W(), H()), 0.4, 0.55, 0.88);
 composer.addPass(bloom);
-composer.addPass(new OutputPass());
+const output = new OutputPass();
+composer.addPass(output);
+// Proteção contra pixel "infinito"/NaN no buffer HDR (meia precisão, máx. 65504).
+// Um único pixel assim, ao passar pelo bloom, se espalha e apaga a tela inteira — era o que
+// acontecia no alarme (luz forte colada na sirene). Aqui ele é limitado antes do bloom e da saída.
+const SAFE = 'vec4 safeTex(sampler2D t, vec2 uv){ vec4 c = texture2D(t, uv); if (c.r != c.r || c.g != c.g || c.b != c.b) c = vec4(0.0, 0.0, 0.0, 1.0); return vec4(min(c.rgb, vec3(2000.0)), c.a); }\n';
+for (const [mat, from] of [[bloom.materialHighPassFilter, 'vec4 texel = texture2D( tDiffuse, vUv );'], [output.material, 'gl_FragColor = texture2D( tDiffuse, vUv );']]) {
+  const fs = mat.fragmentShader;
+  if (!fs.includes(from)) continue;
+  const to = from.replace('texture2D( tDiffuse, vUv )', 'safeTex( tDiffuse, vUv )');
+  mat.fragmentShader = fs.replace('void main()', SAFE + 'void main()').replace(from, to);
+  mat.needsUpdate = true;
+}
+const fxaa = new FXAAPass();
+composer.addPass(fxaa);
+
+let prof = PROFILE[tier];
+let shadowDirty = 4; // quadros com sombra forçada
+function applyTier(t, extraScale = 1) {
+  tier = t;
+  prof = PROFILE[t];
+  const pr = prof.scale * extraScale;
+  renderer.setPixelRatio(pr);
+  renderer.setSize(W(), H());
+  composer.setPixelRatio(pr);
+  composer.setSize(W(), H());
+  gtao.enabled = prof.gtao;
+  if (gtao.enabled) gtao.setSize(W() * pr, H() * pr);
+  bloom.enabled = prof.bloom;
+  fxaa.enabled = prof.fxaa;
+  for (const target of [composer.renderTarget1, composer.renderTarget2]) {
+    if (target.samples !== prof.msaa) { target.samples = prof.msaa; target.dispose(); }
+  }
+  if (sun.shadow.mapSize.x !== prof.shadow) {
+    sun.shadow.mapSize.set(prof.shadow, prof.shadow);
+    sun.shadow.map?.dispose();
+    sun.shadow.map = null;
+  }
+  shadowDirty = 2;
+  document.body.dataset.quality = t;
+}
 
 // ---------- mundo ----------
-const world = buildWorld(scene, { quality });
-const atmo = createAtmosphere(scene, { sun, hemi, renderer, bloomPass: bloom, hi });
-
+let world, atmo;
 // ---------- câmeras ----------
 const VIEWS = {
   geral:   { pos: [31, 17, 36], target: [0.8, 1.6, 1.0], label: 'Visão geral' },
@@ -124,23 +191,6 @@ function addHotspot(key, el) {
   return obj;
 }
 
-// ---------- UI ----------
-const ui = createUI({
-  quality,
-  views: VIEWS,
-  onView: flyTo,
-  addHotspot,
-  onState(values, meta, changed) {
-    world.setState(values, meta);
-    if (changed) world.pulse();
-    const pct = Number(values.V10);
-    let dayness;
-    if (Number.isFinite(pct)) dayness = THREE.MathUtils.smoothstep(pct, 12, 68);
-    else dayness = values.V6 === 'ESCURO' ? 0.1 : 0.9;
-    atmo.setNight(1 - dayness);
-  },
-});
-
 // ---------- interação / auto-giro ----------
 let idle = 0;
 controls.addEventListener('start', () => { idle = 0; controls.autoRotate = false; tween = null; });
@@ -162,31 +212,62 @@ function frameForPanel() {
 }
 frameForPanel();
 
+let extraScale = 1;
 addEventListener('resize', () => {
   frameForPanel();
-  renderer.setSize(W(), H());
-  composer.setSize(W(), H());
+  applyTier(tier, extraScale);
   labels.setSize(W(), H());
-  if (gtao) gtao.setSize(W(), H());
 });
+
+// ---------- FPS: rebaixa a qualidade sozinho no modo automático ----------
+const shot = params.has('shot');
+const fps = { frames: 0, time: 0, warm: 2.5, value: 0 };
+function watchFps(realDt) {
+  if (shot) return;
+  if (fps.warm > 0) { fps.warm -= realDt; return; }
+  fps.frames++; fps.time += realDt;
+  if (fps.time < 4) return;
+  fps.value = fps.frames / fps.time;
+  fps.frames = 0; fps.time = 0;
+  ui?.setFps(fps.value);
+  if (!qualityAuto || document.hidden) return;
+  const min = prof.cap ? prof.cap * 0.75 : 30;
+  if (fps.value >= min) return;
+  if (tier !== 'low') {
+    applyTier(TIERS[TIERS.indexOf(tier) + 1], extraScale);
+    store.set(tier);
+    ui?.setQuality(tier, true, `FPS baixo (${Math.round(fps.value)}) — qualidade ajustada`);
+  } else if (extraScale > 0.7) {
+    extraScale = 0.7;
+    applyTier('low', extraScale);
+    ui?.setQuality(tier, true, `FPS baixo (${Math.round(fps.value)}) — resolução reduzida`);
+  }
+  fps.warm = 1.5;
+}
 
 // ---------- loop ----------
 const timer = new THREE.Timer();
 timer.connect?.(document);
 const clock = { elapsedTime: 0, getDelta() { timer.update(); this.elapsedTime = timer.getElapsed(); return timer.getDelta(); } };
 const fixedNight = params.get('night');
-if (fixedNight !== null) atmo.setNight(Number(fixedNight));
 
 // modo captura (?shot): renderiza alguns quadros e para — usado para gerar imagens do relatório
-const shot = params.has('shot');
 const maxFrames = Number(params.get('frames') || 10);
-let frameCount = 0;
+let frameCount = 0, sinceRender = 0, shadowNight = -1;
+let ui = null;
 
 function frame() {
-  const dt = shot ? 0.3 : Math.min(clock.getDelta(), 0.05);
+  if (shot && frameCount >= maxFrames) { document.body.dataset.done = '1'; return; }
+  requestAnimationFrame(frame);
+  const realDt = shot ? 0.3 : Math.min(clock.getDelta(), 0.1);
+  // perfil leve: limita a 30 FPS (metade do trabalho da GPU, menos calor e travadas)
+  sinceRender += realDt;
+  if (!shot && prof.cap && sinceRender < 1 / prof.cap - 0.002) return;
+  const dt = shot ? realDt : Math.min(sinceRender, 0.05);
+  sinceRender = 0;
   if (shot) clock.elapsedTime += 0.3;
   const t = clock.elapsedTime;
-  if (shot && frameCount++ >= maxFrames) { document.body.dataset.done = '1'; return; }
+  if (shot) frameCount++;
 
   if (tween) {
     tween.t += dt / tween.dur;
@@ -206,22 +287,59 @@ function frame() {
   world.update(dt, t);
   ui.tick(dt);
 
+  if (Math.abs(atmo.night - shadowNight) > 0.002 || world.S.moving) shadowDirty = Math.max(shadowDirty, 1);
+  if (shadowDirty > 0) { renderer.shadowMap.needsUpdate = true; shadowDirty--; shadowNight = atmo.night; }
+
   composer.render(dt);
   labels.render(scene, camera);
-  requestAnimationFrame(frame);
+  watchFps(realDt);
 }
 
-// primeira renderização e introdução cinematográfica
-requestAnimationFrame(() => {
-  frame();
-  ui.ready();
+// ---------- montagem (em etapas, para a tela de carregamento não congelar) ----------
+async function init() {
+  applyTier(tier);
+  await step('Gerando texturas e modelando a casa…');
+  const t0 = performance.now();
+  world = buildWorld(scene, { quality: buildTier });
+  atmo = createAtmosphere(scene, { sun, hemi, renderer, bloomPass: bloom, hi: buildTier === 'high' });
+  if (fixedNight !== null) atmo.setNight(Number(fixedNight));
+
+  ui = createUI({
+    quality: tier,
+    qualityAuto,
+    views: VIEWS,
+    onView: flyTo,
+    addHotspot,
+    onQuality(next) {
+      const p = new URLSearchParams(location.search);
+      if (next === 'auto') { p.delete('q'); store.set(null); } else p.set('q', next);
+      location.search = p.toString();
+    },
+    onState(values, meta, changed) {
+      world.setState(values, meta);
+      if (changed) world.pulse();
+      const pct = Number(values.V10);
+      let dayness;
+      if (Number.isFinite(pct)) dayness = THREE.MathUtils.smoothstep(pct, 12, 68);
+      else dayness = values.V6 === 'ESCURO' ? 0.1 : 0.9;
+      if (fixedNight === null) atmo.setNight(1 - dayness);
+    },
+  });
+
   const start = params.get('view');
   if (start && VIEWS[start]) {
     const v = VIEWS[start];
     camera.position.copy(viewPos(v)); controls.target.set(...v.target);
-  } else {
-    setTimeout(() => flyTo('geral', 3.4), 250);
   }
-});
+  await step('Preparando os shaders da placa de vídeo…');
+  // compila todos os materiais antes do primeiro quadro (sem isso a 1ª imagem trava por segundos)
+  try { await renderer.compileAsync(scene, camera); } catch { /* navegador sem compilação paralela */ }
+  window.__loadMs = performance.now() - t0;
+  console.info(`[casa3d] perfil ${tier}${qualityAuto ? ' (auto)' : ''} · peças estáticas ${world.stats.before} → ${world.stats.after} · ${Math.round(window.__loadMs)} ms`);
 
-window.__casa = { world, atmo, flyTo, camera, controls };
+  frame();
+  ui.ready();
+  if (!(start && VIEWS[start])) setTimeout(() => flyTo('geral', 3.4), 250);
+  window.__casa = { world, atmo, flyTo, camera, controls, renderer, scene, composer, applyTier, get tier() { return tier; }, fps };
+}
+init();

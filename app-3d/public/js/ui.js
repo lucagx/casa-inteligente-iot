@@ -32,7 +32,7 @@ export function garageZone(cm) {
   return { text: 'vaga livre', kind: '' };
 }
 
-export function createUI({ quality, views, onView, addHotspot, onState }) {
+export function createUI({ quality, qualityAuto, views, onView, addHotspot, onState, onQuality }) {
   const $ = (s) => document.querySelector(s);
   const panel = $('#panel');
   let values = {}, meta = {}, lastStateAt = 0, first = true;
@@ -61,7 +61,7 @@ export function createUI({ quality, views, onView, addHotspot, onState }) {
   const modeAuto = $('#modeAuto'), modeManual = $('#modeManual');
 
   // ---------- hotspots na cena ----------
-  const hot = {};
+  const hot = {}, hv = {}; // hv: texto de leitura de cada hotspot (ainda fora do DOM até o 1º quadro)
   const HOT = [
     { key: 'luz', anchor: 'tv', title: 'Iluminação', act: true, dev: 'luz' },
     { key: 'porta', anchor: 'porta', title: 'Porta · trava', act: true, dev: 'porta' },
@@ -78,6 +78,7 @@ export function createUI({ quality, views, onView, addHotspot, onState }) {
     el.className = 'hotspot' + (h.act ? ' act' : '');
     el.innerHTML = `<span class="dot"></span><span class="tag"><b>${h.title}</b><em id="hv-${h.key}">--</em></span>`;
     if (h.act) el.addEventListener('click', (e) => { e.stopPropagation(); toggle(DEVICES.find((d) => d.key === h.dev)); });
+    hv[h.key] = el.querySelector('em');
     addHotspot(h.anchor, el);
     hot[h.key] = el;
   }
@@ -92,13 +93,19 @@ export function createUI({ quality, views, onView, addHotspot, onState }) {
   });
 
   // ---------- qualidade ----------
+  // ciclo: automática → alta → média → leve → automática (recarrega a página)
   const qBtn = $('#quality');
-  qBtn.textContent = quality === 'high' ? 'Qualidade: alta' : 'Qualidade: leve';
-  qBtn.addEventListener('click', () => {
-    const p = new URLSearchParams(location.search);
-    p.set('q', quality === 'high' ? 'low' : 'high');
-    location.search = p.toString();
-  });
+  const QNAME = { high: 'alta', medium: 'média', low: 'leve' };
+  const QORDER = ['auto', 'high', 'medium', 'low'];
+  let qCur = qualityAuto ? 'auto' : quality;
+  let qLabel = '';
+  function setQuality(tier, auto, msg) {
+    qLabel = `Qualidade: ${QNAME[tier]}${auto ? ' (auto)' : ''}`;
+    qBtn.textContent = qLabel;
+    qBtn.title = 'Clique para trocar: automática → alta → média → leve';
+    if (msg) toast(msg);
+  }
+  qBtn.addEventListener('click', () => onQuality(QORDER[(QORDER.indexOf(qCur) + 1) % QORDER.length]));
 
   // ---------- painel no celular ----------
   $('#sheetToggle').addEventListener('click', () => panel.classList.toggle('open'));
@@ -213,7 +220,7 @@ export function createUI({ quality, views, onView, addHotspot, onState }) {
       $(`#st-${d.key}`).textContent = d.label(on, v);
       if (hot[d.key]) {
         hot[d.key].classList.toggle('on', on);
-        document.getElementById(`hv-${d.key}`).textContent = d.label(on, v);
+        hv[d.key].textContent = d.label(on, v);
       }
     }
     const firing = /ATIVO/.test(v.V8 || '');
@@ -221,17 +228,17 @@ export function createUI({ quality, views, onView, addHotspot, onState }) {
     hot.alarme.classList.toggle('firing', firing);
     document.body.classList.toggle('alarm', firing);
 
-    document.getElementById('hv-dht').textContent = `${Number.isFinite(temp) ? temp.toFixed(1) : '--'} °C · ${Number.isFinite(umid) ? Math.round(umid) : '--'}%`;
-    document.getElementById('hv-pir').textContent = pres ? 'movimento' : 'parado';
+    hv.dht.textContent = `${Number.isFinite(temp) ? temp.toFixed(1) : '--'} °C · ${Number.isFinite(umid) ? Math.round(umid) : '--'}%`;
+    hv.pir.textContent = pres ? 'movimento' : 'parado';
     hot.pir.classList.toggle('on', pres);
     const dist = Number(v.V12), z = garageZone(dist);
     $('#vCar').textContent = Number.isFinite(dist) && v.V12 !== '' ? Math.round(dist) : '--';
     $('#bCar').style.width = `${Number.isFinite(dist) ? Math.max(4, 100 - Math.min(100, dist / 2)) : 0}%`;
     $('#sCar').classList.toggle('alert', z?.kind === 'red');
-    document.getElementById('hv-garagem').textContent = z ? `${Math.round(dist)} cm · ${z.text}` : '--';
+    hv.garagem.textContent = z ? `${Math.round(dist)} cm · ${z.text}` : '--';
     hot.garagem.classList.toggle('on', !!z && z.kind !== '');
-    document.getElementById('hv-ldr').textContent = Number.isFinite(luz) ? `${Math.round(luz)}% · ${v.V6 || ''}` : v.V6 || '--';
-    document.getElementById('hv-mcu').textContent = meta.deviceOnline ? 'online' : 'offline';
+    hv.ldr.textContent = Number.isFinite(luz) ? `${Math.round(luz)}% · ${v.V6 || ''}` : v.V6 || '--';
+    hv.mcu.textContent = meta.deviceOnline ? 'online' : 'offline';
     hot.mcu.classList.toggle('on', !!meta.deviceOnline);
 
     const live = meta.mode === 'live';
@@ -283,7 +290,11 @@ export function createUI({ quality, views, onView, addHotspot, onState }) {
   }
   connect();
 
+  setQuality(quality, qualityAuto);
+
   return {
+    setQuality,
+    setFps(v) { qBtn.textContent = `${qLabel} · ${Math.round(v)} FPS`; },
     ready() { document.body.classList.add('ready'); },
     tick() {
       if (!lastStateAt) return;
