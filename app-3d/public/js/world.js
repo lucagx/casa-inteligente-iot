@@ -276,7 +276,9 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     return g;
   }
 
-  const lightMats = [M.bulb, M.ledStrip, M.downlight, M.bollard];
+  // emissivo de cada tipo de luz [dia, noite]. O bloom noturno começa em ~1,25: fitas longas ficam abaixo
+  // (brilham sem espalhar); só as lâmpadas pequenas passam um pouco do limite e ganham um halo discreto
+  const lightMats = [[M.bulb, 1.0, 2.0], [M.ledStrip, 0.5, 0.9], [M.downlight, 0.5, 0.9], [M.bollard, 0.6, 1.2]];
   // "Poças de luz": círculos aditivos no chão que imitam o facho de um spot sem custo de luz real
   const poolTex = (() => {
     const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -1260,14 +1262,13 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // ================================================================
   // Luzes internas/externas (ligadas ao V0)
   // ================================================================
-  addPoint(0xffb86b, 34, 10, -3.0, 2.9, 1.3);        // sala
-  addPoint(0xffc98a, 26, 9, 2.6, 2.8, -1.2);          // jantar/cozinha
+  addPoint(0xffb86b, 22, 10, -3.0, 2.9, 1.3);        // sala (34 deixava mancha no teto)
+  addPoint(0xffc98a, 18, 9, 2.6, 2.8, -1.2);          // jantar/cozinha
   addPoint(0xffb86b, 26, 8, 2.0, UFL + 2.5, -0.8);    // superior (quarto/escritório)
   // área externa: só a qualidade alta usa luzes reais; as outras usam poças de luz (mesmo visual, custo ~zero)
   const eaves = [[-4.8, 3.72, -4.8, 5.2, 0.12], [-0.4, 3.72, -0.4, 5.2, 0.12], [3.0, 3.72, 3.0, 4.9, 0.09], [7.2, 3.72, 7.2, 2.2, 0.09]];
   if (hi) {
     addPoint(0xffc27a, 10, 7, 3.0, 0.9, 7.6);         // caminho
-    addPoint(0x46dcff, 10, 6, -3.6, 0.35, 8.9);       // piscina
     for (const [x, z, tx, tz] of eaves) {
       const sp = new THREE.SpotLight(0xffc88a, 0, 9, 0.62, 0.85, 2);
       sp.position.set(x, SLAB0 - 0.02, z);
@@ -1278,8 +1279,9 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   } else {
     for (const [, , tx, tz, y] of eaves) lightPool(0xffc88a, tx, y + 0.01, tz, 1.9, 1.9, 0.5);
     lightPool(0xffc27a, 3.0, 0.08, 7.6, 2.4, 3.2, 0.32);    // caminho
-    lightPool(0x46dcff, -3.6, 0.13, 8.9, 3.4, 1.9, 0.35);   // piscina
   }
+  // piscina: poça ciano em todos os perfis (a luz pontual do perfil alto fazia uma "estrela" no azulejo)
+  lightPool(0x46dcff, -3.6, 0.13, 8.9, 3.4, 1.9, 0.35);
 
   // ================================================================
   // Estado e animação
@@ -1405,9 +1407,9 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const nightBoost = 0.35 + S.night * 0.65;
     for (const p of pointLights) p.light.intensity = p.base * S.light * nightBoost;
     // lâmpadas/fitas: brilho contido à noite (antes chegava a 6,9 e o bloom "estourava")
-    for (const m of lightMats) m.emissiveIntensity = S.light * (1.2 + S.night * 2.2);
+    for (const [m, day, night] of lightMats) m.emissiveIntensity = S.light * (day + S.night * (night - day));
     for (const lp of lightPools) lp.mat.opacity = lp.base * S.light * (0.15 + S.night * 0.85);
-    M.poolLight.emissiveIntensity = S.light * (1 + S.night * 1.8);
+    M.poolLight.emissiveIntensity = S.light * (0.3 + S.night * 0.3); // antes 2,8: virava uma estrela na água
     // relógio da TV: redesenha ao virar o minuto, mesmo sem estado novo
     if (Math.floor(Date.now() / 60000) !== tvMinute) drawTV();
 
