@@ -2,15 +2,27 @@
 
 Registro do que foi feito, em ordem, e por quê. Serve de base para o relatório e para quem continuar o código.
 
-## Setembro – início de outubro: proposta e base
+## 21/09 — Proposta
 
 - Proposta, lista de materiais e pinagem (`docs/Documento_Inicial_Proposta_Materiais.docx`), relatório inicial
-  (`docs/Projeto_Final_Casa_Inteligente_IoT_IoB.docx`), diagrama de arquitetura (`docs/arquitetura_iot_iob.png`).
-- Primeiro firmware para ESP32-S3 testado no **Wokwi** (`wokwi/`, guia em `docs/Guia_Testes_Wokwi_Blynk.docx`).
-- Casa 3D (three.js) como **gêmeo digital**: o que acontece no protoboard acontece na casa, e vice-versa, via Blynk.
-- 06/10: repositório criado (`c8b6cfe`…`ecefc38`).
+  (`docs/Projeto_Final_Casa_Inteligente_IoT_IoB.docx`) e diagrama de arquitetura (`docs/arquitetura_iot_iob.png`).
+  Entraram no repositório na organização de 06/10.
 
-## 07/10 — Fase 0: hardware real e gravação
+## 24/09 – 25/09 — Casa 3D, Arduino e Blynk
+
+- **24/09:** primeira versão da casa 3D em three.js — o gêmeo digital: o que acontece no protoboard acontece na casa.
+- **25/09:** firmware ESP32-S3 (DHT22, LDR, HC-SR04, LEDs, servo, buzzer, modo automático/manual, V0–V11) e o servidor
+  `server.js` ligando a casa ao Blynk em tempo real (SSE), com modo demonstração. Primeiras capturas.
+
+## 30/09 — Wokwi
+
+- Kit de testes no **Wokwi** (`wokwi/`): circuito simulado + Blynk antes do hardware, guia em `docs/Guia_Testes_Wokwi_Blynk.docx`.
+
+## 06/10 — Repositório
+
+- Estrutura `app-3d/`, `firmware/`, `wokwi/`, `docs/`; o firmware ESP32-S3 saiu à espera da versão em uso no hardware real.
+
+## 07/10 — Troca para o NodeMCU ESP8266 (Fase 0)
 
 - O hardware disponível era **NodeMCU ESP8266** (não ESP32-S3). O firmware real (ajustado pelo grupo) passou a ser a base.
 - Credenciais saíram do código para `secrets.h` (ignorado pelo git).
