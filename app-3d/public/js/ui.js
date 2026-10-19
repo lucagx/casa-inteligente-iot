@@ -1,4 +1,5 @@
 // Interface: conexão em tempo real (SSE), painel, hotspots, eventos e simulação.
+import { fmt } from './format.js';
 
 const ICON = {
   temp: '<path d="M14 14.8V5a2 2 0 1 0-4 0v9.8a4 4 0 1 0 4 0z"/><path d="M12 9v7"/>',
@@ -25,7 +26,7 @@ const svg = (k, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="
 const DEVICES = [
   { key: 'luz', pin: 'V0', write: 'V0', icon: 'bulb', name: 'Iluminação', hw: 'LED · D1 · V0', on: (v) => v.V0 === '1', label: (on) => (on ? 'Ligada' : 'Desligada') },
   { key: 'porta', pin: 'V1', write: 'V1', icon: 'door', name: 'Porta', hw: 'LED trava · D0 · V1', on: (v) => v.V1 === '1', label: (on) => (on ? 'Destrancada' : 'Trancada') },
-  { key: 'janela', pin: 'V7', write: 'V2', icon: 'window', name: 'Janela', hw: 'Servo SG90 · D7 · V2/V7', on: (v) => v.V7 === 'ABERTA', label: (on) => (on ? 'Aberta' : 'Fechada') },
+  { key: 'janela', pin: 'V7', write: 'V2', icon: 'window', name: 'Janela', hw: 'Servo SG90 · D7 · V2/V7', on: (v) => v.V7 === 'ABERTA', label: (on, v) => fmt.janela(v.V7) },
   { key: 'alarme', pin: 'V9', write: 'V9', icon: 'siren', name: 'Alarme', hw: 'Buzzer · D8 · V8/V9', on: (v) => v.V9 === '1', label: (on, v) => (/ATIVO/.test(v.V8 || '') ? 'DISPARADO' : on ? 'Armado' : 'Desarmado'), anyMode: true },
 ];
 
@@ -198,16 +199,16 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
 
   function render() {
     const v = values;
-    const temp = Number(v.V4), umid = Number(v.V5), luz = Number(v.V10);
-    $('#vTemp').textContent = Number.isFinite(temp) ? temp.toFixed(1) : '--';
+    const temp = Number(v.V4), luz = Number(v.V10);
+    $('#vTemp').textContent = fmt.temp(v.V4);
     $('#bTemp').style.width = `${Math.min(100, Math.max(0, ((temp - 10) / 35) * 100)) || 0}%`;
     $('#sTemp').classList.toggle('hot', temp >= 30);
-    $('#vUmid').textContent = Number.isFinite(umid) ? Math.round(umid) : '--';
+    $('#vUmid').textContent = fmt.umid(v.V5);
     $('#vLuz').textContent = Number.isFinite(luz) ? Math.round(luz) : (v.V6 || '--');
     $('#bLuz').style.width = `${Number.isFinite(luz) ? luz : v.V6 === 'CLARO' ? 80 : 15}%`;
     $('#icLuz').innerHTML = svg(v.V6 === 'ESCURO' ? 'moon' : 'sun');
     const pres = v.V11 === '1';
-    $('#vPres').textContent = pres ? 'Detectada' : 'Livre';
+    $('#vPres').textContent = fmt.pres(v.V11);
     $('#sPres').classList.toggle('alert', pres);
 
     const auto = v.V3 === '1';
@@ -230,8 +231,8 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
       }
     }
     // faixa compacta
-    $('#hT').textContent = Number.isFinite(temp) ? temp.toFixed(1) : '--';
-    $('#hU').textContent = Number.isFinite(umid) ? Math.round(umid) : '--';
+    $('#hT').textContent = fmt.temp(v.V4);
+    $('#hU').textContent = fmt.umid(v.V5);
     $('#hL').textContent = Number.isFinite(luz) ? Math.round(luz) : '--';
     $('#hLi').innerHTML = svg(v.V6 === 'ESCURO' ? 'moon' : 'sun');
     $('#hP').textContent = pres ? 'movimento' : 'livre';
@@ -246,7 +247,7 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     hot.alarme.classList.toggle('firing', firing);
     document.body.classList.toggle('alarm', firing);
 
-    hv.dht.textContent = `${Number.isFinite(temp) ? temp.toFixed(1) : '--'} °C · ${Number.isFinite(umid) ? Math.round(umid) : '--'}%`;
+    hv.dht.textContent = `${fmt.temp(v.V4)} °C · ${fmt.umid(v.V5)}%`;
     hv.pir.textContent = pres ? 'movimento' : 'parado';
     hot.pir.classList.toggle('on', pres);
     const dist = Number(v.V12), z = garageZone(dist);

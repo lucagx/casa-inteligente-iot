@@ -59,6 +59,7 @@ let state = {
   deviceOnline: false,
   error: null,
   ts: Date.now(),
+  readAt: null, // hora da última leitura bem-sucedida dos sensores (ts muda a cada batimento)
   // no modo ao vivo começa vazio: a página mostra "--" até a primeira leitura real
   values: MODE === "live" ? {} : {
     V0: "0", V1: "0", V3: "1", V4: "24.0", V5: "58", V6: "CLARO",
@@ -124,6 +125,7 @@ async function pollBlynk() {
       if (!Object.keys(vals).length) throw e;
     }
     const changed = setValues(vals);
+    state.readAt = Date.now();
     const wasOnline = state.blynkOnline;
     state.blynkOnline = true;
     state.error = null;
@@ -182,6 +184,7 @@ function simTick() {
   }
 
   const now = Date.now();
+  state.readAt = now;
   if (armado && sim.presenca && now > sim.alarmeAte) sim.alarmeAte = now + ALARME_MS;
   if (now < sim.alarmeAte && armado) patch.V8 = "ALARME ATIVO";
   else patch.V8 = armado ? "ARMADO" : "DESARMADO";

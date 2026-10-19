@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as TX from './textures.js';
+import { fmt } from './format.js';
 
 // ---------- medidas da casa (metros) ----------
 const FL = 0.15;          // piso do térreo
@@ -483,10 +484,14 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     box(interior, 0.42, 0.42, 2.6, M.cabinet, -5.6, FL + 0.21, 1.15);
   }
   const tvCanvas = document.createElement('canvas');
-  tvCanvas.width = 1024; tvCanvas.height = 576;
+  // desenho em 1024×576 lógicos com escala 2× (2048×1152): texto nítido de perto e mipmaps limpos de longe
+  const TV_SCALE = 2;
+  tvCanvas.width = 1024 * TV_SCALE; tvCanvas.height = 576 * TV_SCALE;
   const tvTex = new THREE.CanvasTexture(tvCanvas);
   tvTex.colorSpace = THREE.SRGBColorSpace;
-  const tvMat = std({ color: 0x000000, emissive: 0xffffff, emissiveMap: tvTex, emissiveIntensity: 0.9, roughness: 0.2 });
+  tvTex.anisotropy = 8;
+  // tela fosca: reflexo forte do ambiente lavava o contraste do texto
+  const tvMat = std({ color: 0x000000, emissive: 0xffffff, emissiveMap: tvTex, emissiveIntensity: 0.9, roughness: 0.6, envMapIntensity: 0.25 });
   box(interior, 0.05, 1.0, 1.72, M.black, -5.74, FL + 1.45, 1.15);
   const tvScreen = new THREE.Mesh(new THREE.PlaneGeometry(1.66, 0.94), tvMat);
   tvScreen.position.set(-5.71, FL + 1.45, 1.15);
@@ -1083,30 +1088,59 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     night: 0,
   };
 
-  function drawTV(v = {}, meta = {}) {
-    const g = tvCanvas.getContext('2d'), W = tvCanvas.width, H = tvCanvas.height;
+  // TV da sala: mesmos valores do painel (fmt) + hora da última leitura.
+  // Só redesenha quando algum texto muda ou o minuto do relógio vira (o canvas vai inteiro para a GPU).
+  let tvV = {}, tvMeta = {}, tvSig = '', tvMinute = -1;
+  function drawTV(v = tvV, meta = tvMeta, force = false) {
+    tvV = v; tvMeta = meta;
+    const now = new Date();
+    tvMinute = Math.floor(now.getTime() / 60000);
+    let status = 'CASA · DEMONSTRAÇÃO', warn = false;
+    if (meta.mode === 'live') {
+      if (!meta.blynkOnline) { status = 'CASA · BLYNK OFFLINE'; warn = true; }
+      else if (!meta.deviceOnline) { status = 'CASA · NODEMCU OFFLINE'; warn = true; }
+      else status = 'CASA · AO VIVO';
+    }
+    const clock = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const temp = fmt.temp(v.V4);
+    const cards = [['UMIDADE', `${fmt.umid(v.V5)}%`], ['PRESENÇA', fmt.pres(v.V11)], ['JANELA', fmt.janela(v.V7)]];
+    const read = `última leitura ${fmt.hora(meta.readAt)}`;
+    const sig = JSON.stringify([status, clock, temp, cards, read]);
+    if (sig === tvSig && !force) return;
+    tvSig = sig;
+
+    // poucos textos e grandes: na vista Sala a TV ocupa ~250 px na tela, letra pequena vira borrão
+    const g = tvCanvas.getContext('2d'), W = 1024, H = 576;
+    g.setTransform(TV_SCALE, 0, 0, TV_SCALE, 0, 0);
     const grd = g.createLinearGradient(0, 0, W, H);
     grd.addColorStop(0, '#0b1422'); grd.addColorStop(1, '#13233a');
     g.fillStyle = grd; g.fillRect(0, 0, W, H);
-    g.fillStyle = '#5ee7ff'; g.font = '600 30px "JetBrains Mono", monospace';
-    g.fillText(meta.live ? 'CASA · AO VIVO' : 'CASA · DEMONSTRAÇÃO', 56, 76);
-    g.fillStyle = '#8aa3bf'; g.font = '400 26px "DM Sans", sans-serif';
-    const d = new Date();
-    g.fillText(d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), W - 150, 76);
-    g.fillStyle = '#ffffff'; g.font = '700 170px "Unbounded", sans-serif';
-    g.fillText(`${v.V4 ? Number(v.V4).toFixed(1) : '--'}°`, 50, 300);
-    g.fillStyle = '#8aa3bf'; g.font = '500 30px "DM Sans", sans-serif';
-    g.fillText('temperatura interna · DHT11', 58, 350);
-    const cards = [['UMIDADE', `${v.V5 ?? '--'}%`], ['LUZ', `${v.V10 ?? '--'}%`], ['JANELA', v.V7 ?? '--']];
+    // cabeçalho: status + relógio
+    g.fillStyle = warn ? '#ffb547' : '#5ee7ff'; g.font = '700 40px "DM Sans", sans-serif';
+    g.fillText(status, 48, 72);
+    g.fillStyle = '#c3d3e6'; g.textAlign = 'right'; g.fillText(clock, W - 48, 72); g.textAlign = 'left';
+    // temperatura grande à esquerda
+    g.fillStyle = '#ffffff'; g.font = '700 168px "Unbounded", sans-serif';
+    g.fillText(`${temp}°`, 40, 300);
+    g.fillStyle = '#9fb4cc'; g.font = '500 36px "DM Sans", sans-serif';
+    g.fillText('Temperatura · DHT11', 48, 356);
+    // umidade / presença / janela em linhas largas embaixo
     cards.forEach(([k, val], i) => {
-      const x = 56 + i * 316;
-      g.fillStyle = 'rgba(255,255,255,0.06)'; g.fillRect(x, 400, 290, 120);
-      g.fillStyle = '#8aa3bf'; g.font = '600 22px "JetBrains Mono", monospace'; g.fillText(k, x + 22, 444);
-      g.fillStyle = '#ffffff'; g.font = '700 40px "DM Sans", sans-serif'; g.fillText(val, x + 22, 496);
+      const x = 40 + i * 320, w = 304;
+      g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(x, 392, w, 136);
+      g.fillStyle = '#9fb4cc'; g.font = '700 30px "DM Sans", sans-serif'; g.fillText(k, x + 20, 434);
+      g.fillStyle = '#ffffff'; g.font = '700 54px "DM Sans", sans-serif'; g.fillText(val, x + 20, 500, w - 40);
     });
+    g.fillStyle = '#7f96b1'; g.font = '500 26px "DM Sans", sans-serif';
+    g.textAlign = 'right'; g.fillText(read, W - 48, 356); g.textAlign = 'left';
     tvTex.needsUpdate = true;
   }
   drawTV();
+  // o primeiro desenho pode sair antes das fontes carregarem: redesenha quando estiverem prontas
+  if (document.fonts) {
+    Promise.all(['500 36px "DM Sans"', '700 40px "DM Sans"', '700 168px "Unbounded"']
+      .map((f) => document.fonts.load(f))).then(() => drawTV(tvV, tvMeta, true), () => {});
+  }
 
   function setState(v, meta) {
     S.lightT = v.V0 === '1' ? 1 : 0;
@@ -1143,6 +1177,8 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     for (const m of lightMats) m.emissiveIntensity = S.light * (1.2 + S.night * 2.2);
     for (const lp of lightPools) lp.mat.opacity = lp.base * S.light * (0.15 + S.night * 0.85);
     M.poolLight.emissiveIntensity = S.light * (1 + S.night * 1.8);
+    // relógio da TV: redesenha ao virar o minuto, mesmo sem estado novo
+    if (Math.floor(Date.now() / 60000) !== tvMinute) drawTV();
 
     // sombras só são recalculadas quando algo que projeta sombra se move (ver main.js)
     S.moving = Math.abs(S.door - S.doorT) > 1e-3 || Math.abs(S.win - S.winT) > 1e-3 || Math.abs(S.gap - S.gapT) > 1e-3;
