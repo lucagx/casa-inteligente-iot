@@ -87,8 +87,10 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
 
   // luzes emissivas controladas pelo estado da "Luz" (V0)
   const warmEmissive = () => std({ color: 0xfff4e2, emissive: 0xffc27a, emissiveIntensity: 0, roughness: 0.4 });
-  M.lampShade = warmEmissive();
-  M.lampShade.side = THREE.DoubleSide;
+  // cúpulas opacas (não acendem); só a lâmpada dentro delas brilha
+  M.lampShade = std({ color: 0xece6dc, roughness: 0.75, side: THREE.DoubleSide });
+  M.lampMetal = std({ color: 0x1d1f22, roughness: 0.45, metalness: 0.6, side: THREE.DoubleSide });
+  M.bulb = warmEmissive();
   M.ledStrip = warmEmissive();
   M.downlight = warmEmissive();
   M.bollard = warmEmissive();
@@ -108,6 +110,13 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   }
   function cyl(parent, rt, rb, h, mat, x, y, z, seg = 24) {
     const m = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat));
+    m.position.set(x, y, z);
+    parent.add(m);
+    return m;
+  }
+  // lâmpada (esfera pequena, não projeta sombra)
+  function sph(parent, r, mat, x, y, z) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 10), mat);
     m.position.set(x, y, z);
     parent.add(m);
     return m;
@@ -209,7 +218,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     return g;
   }
 
-  const lightMats = [M.lampShade, M.ledStrip, M.downlight, M.bollard];
+  const lightMats = [M.bulb, M.ledStrip, M.downlight, M.bollard];
   // "Poças de luz": círculos aditivos no chão que imitam o facho de um spot sem custo de luz real
   const poolTex = (() => {
     const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -271,14 +280,16 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   box(jamb, 0.07, doorO.h, T + 0.05, M.frame, doorO.u + doorO.w - 0.035, doorO.h / 2, T / 2);
   box(jamb, doorO.w, 0.07, T + 0.05, M.frame, doorO.u + doorO.w / 2, doorO.h - 0.035, T / 2);
   box(jamb, doorO.w + 0.5, 0.04, 0.9, M.stone, doorO.u + doorO.w / 2, -0.13, T + 0.45); // soleira/degrau
+  // fundo do vão fica no mesmo plano do topo da base (y = FL) e piscava: placa de pedra 1,2 cm acima cobre os dois
+  box(jamb, doorO.w - 0.14, 0.012, T + 0.05, M.stone, doorO.u + doorO.w / 2, 0.006, T / 2, { cast: false });
 
   // Folha da porta (pivotada na dobradiça)
   const doorHinge = new THREE.Group();
   doorHinge.userData.dynamic = true;
   doorHinge.position.set(doorO.u + 0.07, 0, T * 0.62);
   southWall.add(doorHinge);
-  const leafW = doorO.w - 0.14, leafH = doorO.h - 0.075;
-  box(doorHinge, leafW, leafH, 0.06, M.walnut, leafW / 2, leafH / 2, 0);
+  const leafW = doorO.w - 0.14, leafH = doorO.h - 0.075 - 0.012;
+  box(doorHinge, leafW, leafH, 0.06, M.walnut, leafW / 2, 0.012 + leafH / 2, 0);
   // puxador vertical em aço
   box(doorHinge, 0.03, 1.2, 0.03, M.steel, leafW - 0.12, 1.15, 0.09);
   box(doorHinge, 0.03, 0.03, 0.06, M.steel, leafW - 0.12, 0.6, 0.05);
@@ -433,10 +444,15 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   box(root, 2.95, 0.03, 7.3, M.terraceDeck, -4.55, UFL + 0.015, 0, { cast: false });
   {
     const railH = 1.05;
+    // laterais vão até a face externa da parede oeste do andar de cima e retornam até ela:
+    // antes terminavam no ar (a parede só existe entre z = -3,5 e 2,5)
+    const xw = -3.0 - T / 2 - 0.01, x0 = -6.25, zs = 3.75, zn = -3.75;
     const rails = [
-      { x: -6.25, z: 0, w: 0.02, d: 7.5 },
-      { x: -4.65, z: 3.75, w: 3.2, d: 0.02 },
-      { x: -4.65, z: -3.75, w: 3.2, d: 0.02 },
+      { x: x0, z: 0, w: 0.02, d: zs - zn },
+      { x: (x0 + xw) / 2, z: zs, w: xw - x0, d: 0.02 },
+      { x: (x0 + xw) / 2, z: zn, w: xw - x0, d: 0.02 },
+      { x: xw, z: (zs + 2.5) / 2, w: 0.02, d: zs - 2.5 },
+      { x: xw, z: (zn - 3.5) / 2, w: 0.02, d: -3.5 - zn },
     ];
     for (const r of rails) {
       const g = new THREE.Mesh(new THREE.BoxGeometry(r.w, railH, r.d), M.railGlass);
@@ -445,11 +461,13 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
       box(root, Math.max(r.w, 0.05), 0.05, Math.max(r.d, 0.05), M.steel, r.x, UFL + railH, r.z);
     }
     // espreguiçadeiras
-    for (const z of [-1.2, 0.2]) {
-      box(root, 0.7, 0.3, 1.8, M.oak, -5.2, UFL + 0.15, z, { round: 0.04 });
-      const back = box(root, 0.66, 0.08, 0.7, M.fabric, -5.2, UFL + 0.55, z - 0.62, { round: 0.03 });
-      back.rotation.x = -0.9;
-      box(root, 0.66, 0.08, 1.2, M.fabric, -5.2, UFL + 0.34, z + 0.25, { round: 0.03 });
+    // lado a lado, voltadas para a piscina (+z), longe da porta de correr; encosto sobe na cabeceira
+    const z = 1.75;
+    for (const x of [-5.45, -4.55]) {
+      box(root, 0.7, 0.3, 1.8, M.oak, x, UFL + 0.15, z, { round: 0.04 });
+      const back = box(root, 0.66, 0.08, 0.7, M.fabric, x, UFL + 0.65, z - 0.57, { round: 0.03 });
+      back.rotation.x = 0.9;
+      box(root, 0.66, 0.08, 1.2, M.fabric, x, UFL + 0.34, z + 0.25, { round: 0.03 });
     }
   }
 
@@ -458,21 +476,33 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // ================================================================
   const interior = new THREE.Group(); root.add(interior);
   // Sala
-  box(interior, 3.2, 0.012, 2.4, M.rug, -3.4, FL + 0.012, 1.3, { cast: false });
   {
-    const sx = -2.1, sz = 1.2;
-    box(interior, 1.0, 0.42, 2.8, M.fabric, sx, FL + 0.21, sz, { round: 0.06 });
-    box(interior, 0.28, 0.5, 2.8, M.fabric, sx + 0.38, FL + 0.62, sz, { round: 0.08 });
-    box(interior, 0.95, 0.3, 0.22, M.fabric, sx, FL + 0.55, sz - 1.39, { round: 0.08 });
-    box(interior, 1.9, 0.42, 1.0, M.fabric, sx - 0.45, FL + 0.21, sz + 1.9, { round: 0.06 }); // chaise
-    box(interior, 1.9, 0.5, 0.28, M.fabric, sx - 0.45, FL + 0.62, sz + 2.28, { round: 0.08 });
-    for (let i = 0; i < 3; i++) box(interior, 0.2, 0.42, 0.75, M.fabric, sx + 0.18, FL + 0.66, sz - 0.9 + i * 0.85, { round: 0.1 });
-    box(interior, 0.14, 0.34, 0.42, M.fabricGreen, sx + 0.05, FL + 0.6, sz - 1.0, { round: 0.08 }).rotation.z = 0.2;
-    box(interior, 0.14, 0.34, 0.42, M.fabricRust, sx + 0.05, FL + 0.6, sz + 0.9, { round: 0.08 }).rotation.z = 0.2;
-    // mesa de centro
-    box(interior, 0.7, 0.05, 1.2, M.walnut, -3.4, FL + 0.38, 1.2, { round: 0.02 });
-    for (const [dx, dz] of [[-0.28, -0.52], [0.28, -0.52], [-0.28, 0.52], [0.28, 0.52]]) box(interior, 0.03, 0.36, 0.03, M.black, -3.4 + dx, FL + 0.18, 1.2 + dz);
-    box(interior, 0.25, 0.08, 0.18, M.ceramic, -3.35, FL + 0.44, 1.0, { round: 0.03 });
+    // sofá em L (seccional): assento principal voltado para a TV + chaise junto ao vidro (z = 3,43),
+    // mesmas alturas e almofadas nos dois lados para ler como uma peça só
+    const sx = -2.1;              // centro do assento principal (x)
+    const z0 = -0.3, zc = 2.1;    // início do assento principal · início da chaise
+    const zb = 3.1;               // face de trás do encosto da chaise (33 cm do vidro)
+    const xc = -3.5;              // ponta da chaise
+    const xb = sx + 0.5;          // face de trás do encosto principal
+    box(interior, 1.0, 0.42, zc - z0, M.fabric, sx, FL + 0.21, (z0 + zc) / 2, { round: 0.06 });
+    box(interior, xb - xc, 0.42, zb - zc, M.fabric, (xc + xb) / 2, FL + 0.21, (zc + zb) / 2, { round: 0.06 });
+    box(interior, 0.28, 0.5, zb - z0, M.fabric, xb - 0.14, FL + 0.62, (z0 + zb) / 2, { round: 0.08 });
+    box(interior, xb - 0.28 - xc, 0.5, 0.28, M.fabric, (xc + xb - 0.28) / 2, FL + 0.62, zb - 0.14, { round: 0.08 });
+    // braços do chão até 0,68 m (antes ficavam soltos acima do piso, fora do assento)
+    box(interior, 1.0, 0.68, 0.22, M.fabric, sx, FL + 0.34, z0 - 0.11, { round: 0.08 });
+    box(interior, 0.22, 0.68, zb - zc, M.fabric, xc - 0.11, FL + 0.34, (zc + zb) / 2, { round: 0.08 });
+    for (const z of [z0 + 0.4, z0 + 1.2, z0 + 2.0]) box(interior, 0.2, 0.42, 0.75, M.fabric, sx + 0.18, FL + 0.66, z, { round: 0.1 });
+    for (const x of [xc + 0.4, xc + 1.2]) box(interior, 0.75, 0.42, 0.2, M.fabric, x, FL + 0.66, zb - 0.38, { round: 0.1 });
+    box(interior, 0.14, 0.34, 0.42, M.fabricGreen, sx + 0.05, FL + 0.6, z0 + 0.5, { round: 0.08 }).rotation.z = 0.2;
+    box(interior, 0.42, 0.34, 0.14, M.fabricRust, xc + 0.5, FL + 0.6, zb - 0.5, { round: 0.08 }).rotation.x = -0.2;
+    // tapete alinhado ao L: começa no braço e entra 40 cm sob a frente da chaise e 60 cm sob o assento
+    const rx0 = -5.0, rx1 = sx - 0.5 + 0.6, rz0 = z0, rz1 = zc + 0.4;
+    const rx = (rx0 + rx1) / 2, rz = (rz0 + rz1) / 2;
+    box(interior, rx1 - rx0, 0.012, rz1 - rz0, M.rug, rx, FL + 0.012, rz, { cast: false });
+    // mesa de centro no meio do tapete
+    box(interior, 0.7, 0.05, 1.2, M.walnut, rx, FL + 0.38, rz, { round: 0.02 });
+    for (const [dx, dz] of [[-0.28, -0.52], [0.28, -0.52], [-0.28, 0.52], [0.28, 0.52]]) box(interior, 0.03, 0.36, 0.03, M.black, rx + dx, FL + 0.18, rz + dz);
+    box(interior, 0.25, 0.08, 0.18, M.ceramic, rx + 0.05, FL + 0.44, rz - 0.2, { round: 0.03 });
   }
   // parede de TV com ripado + TV exibindo dados reais
   {
@@ -502,12 +532,18 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // luminária de arco
   {
     cyl(interior, 0.18, 0.2, 0.04, M.black, -1.2, FL + 0.02, 2.6);
-    const arc = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.018, 8, 40, Math.PI * 0.62), M.steel);
-    arc.position.set(-2.2, FL + 1.1, 2.6); arc.rotation.z = -0.05;
+    // arco nasce no topo da haste e a cúpula fica presa na ponta dele (antes ficava 0,5 m solta)
+    const ax = -2.2, ay = FL + 1.1, R = 1.0, a0 = -0.05, span = Math.PI * 0.7;
+    const arc = new THREE.Mesh(new THREE.TorusGeometry(R, 0.018, 8, 40, span), M.steel);
+    arc.position.set(ax, ay, 2.6); arc.rotation.z = a0;
     interior.add(arc);
-    const shade = new THREE.Mesh(new THREE.SphereGeometry(0.22, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.lampShade);
-    shade.position.set(-3.05, FL + 1.95, 2.6);
+    const tx = ax + R * Math.cos(a0 + span), ty = ay + R * Math.sin(a0 + span);
+    cyl(interior, 0.008, 0.008, 0.08, M.steel, tx, ty - 0.04, 2.6, 6);
+    const shade = new THREE.Mesh(new THREE.SphereGeometry(0.22, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.lampMetal);
+    shade.position.set(tx, ty - 0.08 - 0.22, 2.6);
     interior.add(shade);
+    sph(interior, 0.05, M.bulb, tx, ty - 0.08 - 0.16, 2.6);
+    lightPool(0xffc88a, tx, FL + 0.425, 2.5, 0.5, 0.45, 0.3); // facho no assento da chaise
     cyl(interior, 0.018, 0.018, 1.1, M.steel, -1.2, FL + 0.55, 2.6, 8);
   }
   // planta grande
@@ -541,9 +577,10 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     // pendente do jantar
     cyl(interior, 0.004, 0.004, 1.1, M.black, 0.0, SLAB0 - 0.55, -1.4, 6);
     const pend = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.32, 0.22, 32, 1, true), M.lampShade);
-    pend.material = M.lampShade;
     pend.position.set(0, SLAB0 - 1.15, -1.4);
     interior.add(pend);
+    sph(interior, 0.06, M.bulb, 0, SLAB0 - 1.18, -1.4);
+    lightPool(0xffc88a, 0, FL + 0.78, -1.4, 0.5, 0.75, 0.3); // facho no tampo da mesa
   }
 
   // Cozinha
@@ -563,9 +600,10 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     }
     for (const x of [3.1, 4.1]) {
       cyl(interior, 0.004, 0.004, 1.3, M.black, x, SLAB0 - 0.65, -1.0, 6);
-      const s = new THREE.Mesh(new THREE.SphereGeometry(0.13, 24, 16), M.lampShade);
-      s.position.set(x, SLAB0 - 1.35, -1.0);
+      const s = new THREE.Mesh(new THREE.SphereGeometry(0.15, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.lampMetal);
+      s.position.set(x, SLAB0 - 1.45, -1.0);
       interior.add(s);
+      sph(interior, 0.045, M.bulb, x, SLAB0 - 1.41, -1.0);
     }
     box(interior, 0.4, 0.3, 0.3, M.steel, 5.2, FL + 1.07, -3.1, { round: 0.03 }); // cafeteira
     plant(interior, 2.2, -3.1, 0.5, FL + 0.92);
@@ -586,7 +624,11 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     box(interior, 2.2, 1.1, 0.08, M.walnut, 5.6, UFL + 0.75, -3.3);
     for (const x of [4.3, 6.9]) {
       box(interior, 0.45, 0.5, 0.4, M.walnut, x, UFL + 0.25, -3.1);
-      cyl(interior, 0.1, 0.12, 0.28, M.lampShade, x, UFL + 0.64, -3.1);
+      cyl(interior, 0.012, 0.012, 0.2, M.steel, x, UFL + 0.6, -3.1, 6);
+      const ls = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.2, 24, 1, true), M.lampShade);
+      ls.position.set(x, UFL + 0.72, -3.1);
+      interior.add(ls);
+      sph(interior, 0.04, M.bulb, x, UFL + 0.72, -3.1);
     }
     box(interior, 1.4, 0.04, 0.6, M.oak, -1.3, UFL + 0.74, -3.05);
     box(interior, 0.6, 0.36, 0.03, M.black, -1.3, UFL + 1.0, -3.2);
