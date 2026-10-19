@@ -13,6 +13,8 @@ const UFL = SLAB0 + 0.35; // 3.70 piso superior
 const UH = 3.0;           // pé-direito superior
 const ROOF0 = UFL + UH;   // 6.70
 const T = 0.25;           // espessura das paredes
+// piscina (centro, largura x, comprimento z) e profundidade real: o terreno tem um furo do tamanho dela
+const POOL = { x: -3.6, z: 8.9, w: 6.0, d: 3.0, depth: 1.3 };
 // escada: degraus flutuantes na parede norte da sala, sobem para +x até o andar de cima
 const ST_N = 18, ST_R = (UFL - FL) / ST_N, ST_G = 0.25;
 const ST_X0 = -4.9;                          // pé da escada: ~1 m livre até a parede oeste para chegar nela
@@ -87,8 +89,9 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
 
   const waterNormal = TX.waterNormal();
   M.water = new THREE.MeshPhysicalMaterial({
-    color: 0x2aa3bd, metalness: 0, roughness: 0.04, normalMap: waterNormal, normalScale: new THREE.Vector2(0.35, 0.35),
-    transparent: true, opacity: 0.78, clearcoat: 1, clearcoatRoughness: 0.05, depthWrite: false,
+    // pouco opaca e com reflexo moderado: o fundo de 1,3 m aparece (antes parecia um piso sólido)
+    color: 0x2a9cc0, metalness: 0, roughness: 0.06, normalMap: waterNormal, normalScale: new THREE.Vector2(0.3, 0.3),
+    transparent: true, opacity: 0.55, clearcoat: 0.5, clearcoatRoughness: 0.08, envMapIntensity: 0.6, depthWrite: false,
   });
 
   // luzes emissivas controladas pelo estado da "Luz" (V0)
@@ -116,6 +119,41 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   }
   function cyl(parent, rt, rb, h, mat, x, y, z, seg = 24) {
     const m = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat));
+    m.position.set(x, y, z);
+    parent.add(m);
+    return m;
+  }
+  // laje w × h × d com topo em topY e um furo retangular [x0, x1, z0, z1]; r = raio das bordas.
+  // UVs refeitos para o mesmo mapeamento 0..1 por face de uma BoxGeometry (texturas e repeat iguais)
+  function slabWithHole(w, h, d, [x0, x1, z0, z1], mat, topY, r) {
+    const sh = new THREE.Shape();
+    sh.moveTo(-w / 2 + r, -d / 2 + r); sh.lineTo(w / 2 - r, -d / 2 + r); sh.lineTo(w / 2 - r, d / 2 - r); sh.lineTo(-w / 2 + r, d / 2 - r); sh.closePath();
+    // o chanfro cresce r para dentro do furo: o furo desenhado é r maior para terminar na medida certa
+    const hp = new THREE.Path();
+    hp.moveTo(x0 - r, z0 - r); hp.lineTo(x0 - r, z1 + r); hp.lineTo(x1 + r, z1 + r); hp.lineTo(x1 + r, z0 - r); hp.closePath();
+    sh.holes.push(hp);
+    const g = new THREE.ExtrudeGeometry(sh, { depth: h - 2 * r, bevelEnabled: true, bevelThickness: r, bevelSize: r, bevelSegments: 3, curveSegments: 1 });
+    g.rotateX(Math.PI / 2);                 // forma (x, y) → chão (x, z); extrusão para baixo
+    g.translate(0, topY - r, 0);
+    g.computeVertexNormals();
+    const pos = g.attributes.position, nrm = g.attributes.normal, uv = g.attributes.uv, y0 = topY - h;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const ax = Math.abs(nrm.getX(i)), ay = Math.abs(nrm.getY(i)), az = Math.abs(nrm.getZ(i));
+      if (ay >= ax && ay >= az) uv.setXY(i, x / w + 0.5, 0.5 - z / d);
+      else if (ax > az) uv.setXY(i, z / d + 0.5, (y - y0) / h);
+      else uv.setXY(i, x / w + 0.5, (y - y0) / h);
+    }
+    const m = shadowed(new THREE.Mesh(g, mat), false, true);
+    root.add(m);
+    return m;
+  }
+  // caixa com UV em metros (azulejo do mesmo tamanho em qualquer face; o material usa repeat 1)
+  function tiledBox(parent, w, h, d, mat, x, y, z) {
+    const g = new THREE.BoxGeometry(w, h, d), uv = g.attributes.uv;
+    const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]]; // +x, -x, +y, -y, +z, -z
+    for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) { const i = f * 4 + k; uv.setXY(i, uv.getX(i) * dims[f][0], uv.getY(i) * dims[f][1]); }
+    const m = shadowed(new THREE.Mesh(g, mat), false, true);
     m.position.set(x, y, z);
     parent.add(m);
     return m;
@@ -316,9 +354,11 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // Terreno flutuante (maquete em corte)
   // ================================================================
   const LW = 32, LD = 24;
-  box(root, LW, 0.4, LD, M.grass, 0, -0.2, 0, { round: 0.18 });
-  const soilM = box(root, LW - 0.35, 1.6, LD - 0.35, M.soil, 0, -1.2, 0, { round: 0.12 });
-  soilM.material.map.repeat.set(5, 1);
+  // grama e solo são lajes com o furo da piscina (Extrude com chanfro = bordas arredondadas como antes)
+  const poolHole = [POOL.x - POOL.w / 2, POOL.x + POOL.w / 2, POOL.z - POOL.d / 2, POOL.z + POOL.d / 2];
+  slabWithHole(LW, 0.4, LD, poolHole, M.grass, 0, 0.18);
+  slabWithHole(LW - 0.35, 1.6, LD - 0.35, poolHole, M.soil, -0.4, 0.12);
+  M.soil.map.repeat.set(5, 1);
   box(root, LW - 0.9, 2.2, LD - 0.9, M.rock, 0, -3.1, 0, { round: 0.3 });
   box(root, LW - 3.5, 1.2, LD - 3.5, M.rock, 0, -4.6, 0, { round: 0.5 });
 
@@ -821,30 +861,51 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     plant(root, -6.25, 6.45, 0.7, y);
     plant(root, 1.4, 6.45, 0.7, y);
   }
-  // piscina
+  // piscina: poço de 1,3 m no furo do terreno, azulejo em metros, água mais transparente
   {
-    const px = -3.6, pz = 8.9, pw = 6.0, pd = 3.0;
-    box(root, pw, 0.02, pd, M.tile, px, 0.015, pz, { cast: false });
-    box(root, pw, 0.14, 0.05, M.tile, px, 0.07, pz - pd / 2 + 0.025);
-    box(root, pw, 0.14, 0.05, M.tile, px, 0.07, pz + pd / 2 - 0.025);
-    box(root, 0.05, 0.14, pd, M.tile, px - pw / 2 + 0.025, 0.07, pz);
-    box(root, 0.05, 0.14, pd, M.tile, px + pw / 2 - 0.025, 0.07, pz);
-    box(root, pw + 0.7, 0.07, 0.35, M.stone, px, 0.16, pz - pd / 2 - 0.175);
-    box(root, pw + 0.7, 0.07, 0.35, M.stone, px, 0.16, pz + pd / 2 + 0.175);
-    box(root, 0.35, 0.07, pd, M.stone, px - pw / 2 - 0.175, 0.16, pz);
-    box(root, 0.35, 0.07, pd, M.stone, px + pw / 2 + 0.175, 0.16, pz);
-    const water = new THREE.Mesh(new THREE.PlaneGeometry(pw, pd), M.water);
+    const { x: px, z: pz, w: pw, d: pd, depth } = POOL;
+    const top = 0.14, yF = 0.1 - depth, wallH = top - yF, wt = 0.05;
+    const tileMap = M.tile.map.clone(); tileMap.repeat.set(1, 1); tileMap.needsUpdate = true;
+    const wallMat = std({ map: tileMap, roughness: 0.25, color: 0xcfe7ec });
+    const floorMat = std({ map: tileMap, roughness: 0.3, color: 0x8db9c4 }); // fundo mais escuro: lê como profundo
+    tiledBox(root, pw, 0.04, pd, floorMat, px, yF - 0.02, pz);
+    tiledBox(root, pw, wallH, wt, wallMat, px, yF + wallH / 2, pz - pd / 2 + wt / 2);
+    tiledBox(root, pw, wallH, wt, wallMat, px, yF + wallH / 2, pz + pd / 2 - wt / 2);
+    tiledBox(root, wt, wallH, pd - wt * 2, wallMat, px - pw / 2 + wt / 2, yF + wallH / 2, pz);
+    tiledBox(root, wt, wallH, pd - wt * 2, wallMat, px + pw / 2 - wt / 2, yF + wallH / 2, pz);
+    // borda de pedra maciça do chão (y 0) até 0,195: fecha a lateral externa da parede de azulejo,
+    // que antes aparecia entre a grama e a borda; avança 4 cm sobre a água (pingadeira)
+    const bh = 0.195, bw = 0.35, ov = 0.04, bwo = bw + ov;
+    box(root, pw + bw * 2, bh, bwo, M.stone, px, bh / 2, pz - pd / 2 - bw / 2 + ov / 2);
+    box(root, pw + bw * 2, bh, bwo, M.stone, px, bh / 2, pz + pd / 2 + bw / 2 - ov / 2);
+    box(root, bwo, bh, pd - ov * 2, M.stone, px - pw / 2 - bw / 2 + ov / 2, bh / 2, pz);
+    box(root, bwo, bh, pd - ov * 2, M.stone, px + pw / 2 + bw / 2 - ov / 2, bh / 2, pz);
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(pw - wt * 2, pd - wt * 2), M.water);
     water.rotation.x = -Math.PI / 2;
-    water.position.set(px, 0.12, pz);
+    water.position.set(px, 0.1, pz);
     water.receiveShadow = true;
     root.add(water);
+    // luminária na parede, meio metro abaixo da água, e o brilho dela no fundo
     const pl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.06, 0.02), M.poolLight);
-    pl.position.set(px, 0.07, pz - pd / 2 + 0.06);
+    pl.position.set(px, -0.45, pz - pd / 2 + wt + 0.011);
     root.add(pl);
+    lightPool(0x46dcff, px, yF + 0.012, pz, pw * 0.5, pd * 0.55, 0.45);
+    // escada de aço na ponta leste: dá a escala da profundidade
+    {
+      const lx = px + pw / 2 - wt - 0.1, ox = px + pw / 2 + 0.25;
+      for (const dz of [-0.25, 0.25]) {
+        const z = pz + dz;
+        cyl(root, 0.02, 0.02, 1.75, M.steel, lx, -0.025, z, 10);                      // desce na água
+        const h = cyl(root, 0.02, 0.02, ox - lx, M.steel, (lx + ox) / 2, 0.85, z, 10); // passa sobre a borda
+        h.rotation.z = Math.PI / 2;
+        cyl(root, 0.02, 0.02, 0.66, M.steel, ox, 0.52, z, 10);                          // fixa na pedra
+      }
+      for (const y of [-0.75, -0.45, -0.15]) box(root, 0.08, 0.025, 0.5, M.steel, lx - 0.02, y, pz);
+    }
     // espreguiçadeiras no gramado a oeste da piscina, pés voltados para a água, 40 cm da borda de pedra
     // (ao sul não cabem: entre a borda e o fim do terreno sobram só 1,25 m)
-    const lx = px - pw / 2 - 0.35 - 0.4 - 0.9;
-    for (const dz of [-0.55, 0.55]) lounger(root, lx, 0, pz + dz, Math.PI / 2);
+    const lx = POOL.x - POOL.w / 2 - 0.35 - 0.4 - 0.9;
+    for (const dz of [-0.55, 0.55]) lounger(root, lx, 0, POOL.z + dz, Math.PI / 2);
   }
   // caminho de pedras até a porta + calçada da garagem
   for (let i = 0; i < 9; i++) box(root, 1.5, 0.06, 0.55, M.stone, 3.0, 0.03, 4.4 + i * 0.85, { round: 0.02 });
@@ -1042,7 +1103,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const nrm = geo.attributes.normal;
     for (let i = 0; i < nrm.count; i++) nrm.setXYZ(i, 0, 1, 0); // sombreia como o gramado
     const grassMat = new THREE.MeshStandardMaterial(cutout({ map: TX.grassBlades(), side: THREE.DoubleSide, roughness: 0.95 }, 0.5));
-    const blocked = [[-6.8, 8.9, -4.2, 4.2], [-7.1, 2.0, 3.8, 6.9], [-7.0, -0.1, 7.1, 12], [2.1, 3.9, 3.8, 12], [6.1, 8.8, -4, 12]];
+    const blocked = [[-9.4, -7.1, 7.7, 10.1], [-6.8, 8.9, -4.2, 4.2], [-7.1, 2.0, 3.8, 6.9], [-7.0, -0.1, 7.1, 12], [2.1, 3.9, 3.8, 12], [6.1, 8.8, -4, 12]];
     const ok = (x, z) => !blocked.some(([a, b, c, d]) => x > a && x < b && z > c && z < d);
     const pts = [];
     let seed = 7;
@@ -1280,8 +1341,6 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     for (const [, , tx, tz, y] of eaves) lightPool(0xffc88a, tx, y + 0.01, tz, 1.9, 1.9, 0.5);
     lightPool(0xffc27a, 3.0, 0.08, 7.6, 2.4, 3.2, 0.32);    // caminho
   }
-  // piscina: poça ciano em todos os perfis (a luz pontual do perfil alto fazia uma "estrela" no azulejo)
-  lightPool(0x46dcff, -3.6, 0.13, 8.9, 3.4, 1.9, 0.35);
 
   // ================================================================
   // Estado e animação
