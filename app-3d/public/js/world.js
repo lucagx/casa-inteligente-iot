@@ -25,7 +25,7 @@ const VOID_X0 = -3.0 + T / 2;                // vão na laje começa na face int
 const damp = (cur, target, lambda, dt) => cur + (target - cur) * (1 - Math.exp(-lambda * dt));
 
 // quality: 'high' | 'medium' | 'low' (ver main.js → perfis de qualidade)
-export function buildWorld(scene, { quality = 'high' } = {}) {
+export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, garagem: true } } = {}) {
   const hi = quality === 'high';
   // perfis com MSAA usam alpha-to-coverage: borda de folha/grama suave em vez de serrilhada e "cintilante"
   const a2c = quality !== 'low';
@@ -1193,8 +1193,8 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   const SONAR_Z = 0.95;                    // face do sensor (fundo da vaga)
   const parkMats = [0x36e39a, 0xffb020, 0xff3b55].map((c) => std({ color: 0x222222, emissive: c, emissiveIntensity: 0 }));
   const sonarMat = new THREE.MeshBasicMaterial({ color: 0x5ee7ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
-  let sonarBeam;
-  {
+  let sonarBeam = null;
+  if (sensores.garagem) {
     const g = new THREE.Group();
     g.position.set(7.1, 0, SONAR_Z - 0.06);
     root.add(g);
@@ -1228,7 +1228,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   }
 
   // LDR (A0 → V6/V10) na cobertura: decide se é dia ou noite para a luz automática
-  {
+  if (sensores.ldr) {
     const g = new THREE.Group();
     g.position.set(7.4, ROOF0 + 0.3, 2.3);
     root.add(g);
@@ -1452,6 +1452,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // cm medidos pelo HC-SR04 → metros entre o sensor e o para-choque na cena.
   // Na maquete o carrinho trabalha entre ~5 e 100 cm; acima disso a vaga está livre.
   function distToGap(cm) {
+    if (!sensores.garagem) return 0.6;   // sem HC-SR04: carro estacionado no fundo da vaga
     if (!Number.isFinite(cm)) return 6;
     const k = THREE.MathUtils.clamp((cm - 4) / 96, 0, 1);
     return 0.12 + k * 5.9;
@@ -1532,8 +1533,10 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const zone = !Number.isFinite(S.dist) ? -1 : S.dist <= 10 ? 2 : S.dist <= 30 ? 1 : S.dist <= 80 ? 0 : -1;
     const blink = zone === 2 ? (Math.sin(t * 18) > 0 ? 1 : 0.15) : 1;
     parkMats.forEach((m, i) => (m.emissiveIntensity = i === zone ? 2.2 * blink : 0.05));
-    sonarBeam.scale.set(1, Math.max(0.1, S.gap), 1);
-    sonarBeam.position.set(0, 0.7, 0.15 + S.gap / 2);
+    if (sonarBeam) {
+      sonarBeam.scale.set(1, Math.max(0.1, S.gap), 1);
+      sonarBeam.position.set(0, 0.7, 0.15 + S.gap / 2);
+    }
     sonarMat.opacity = S.online && zone >= 0 ? 0.05 + 0.04 * Math.sin(t * 12) : 0.012;
 
     // NodeMCU: pulsação enquanto conectado

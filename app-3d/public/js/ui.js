@@ -1,5 +1,6 @@
 // Interface: conexão em tempo real (SSE), painel, hotspots, eventos e simulação.
 import { fmt } from './format.js';
+import { SENSORES } from './config.js';
 
 const ICON = {
   temp: '<path d="M14 14.8V5a2 2 0 1 0-4 0v9.8a4 4 0 1 0 4 0z"/><path d="M12 9v7"/>',
@@ -81,6 +82,7 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     { key: 'mcu', anchor: 'mcu', title: 'NodeMCU ESP8266' },
   ];
   for (const h of HOT) {
+    if ((h.key === 'ldr' && !SENSORES.ldr) || (h.key === 'garagem' && !SENSORES.garagem)) continue;
     const el = document.createElement('div');
     el.className = 'hotspot' + (h.act ? ' act' : '');
     el.innerHTML = `<span class="dot"></span><span class="tag"><b>${h.title}</b><em id="hv-${h.key}">--</em></span>`;
@@ -215,7 +217,7 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     modeAuto.classList.toggle('on', auto);
     modeManual.classList.toggle('on', !auto);
     $('#modeHint').textContent = auto
-      ? 'As regras do firmware decidem: janela abre ≥ 30 °C e fecha ≤ 27 °C; luz acende com movimento no PIR quando o LDR indica escuro.'
+      ? `As regras do firmware decidem: janela abre ≥ 30 °C e fecha ≤ 27 °C; luz acende com movimento no PIR${SENSORES.ldr ? ' quando o LDR indica escuro' : ''}.`
       : 'Você comanda cada atuador pelo painel ou pelo app Blynk.';
 
     for (const d of DEVICES) {
@@ -256,9 +258,11 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     $('#sCar').classList.toggle('alert', z?.kind === 'red');
     $('#hC').textContent = Number.isFinite(dist) && v.V12 !== '' ? Math.round(dist) : '--';
     $('#hCw').classList.toggle('alert', z?.kind === 'red');
-    hv.garagem.textContent = z ? `${Math.round(dist)} cm · ${z.text}` : '--';
-    hot.garagem.classList.toggle('on', !!z && z.kind !== '');
-    hv.ldr.textContent = Number.isFinite(luz) ? `${Math.round(luz)}% · ${v.V6 || ''}` : v.V6 || '--';
+    if (hot.garagem) {
+      hv.garagem.textContent = z ? `${Math.round(dist)} cm · ${z.text}` : '--';
+      hot.garagem.classList.toggle('on', !!z && z.kind !== '');
+    }
+    if (hv.ldr) hv.ldr.textContent = Number.isFinite(luz) ? `${Math.round(luz)}% · ${v.V6 || ''}` : v.V6 || '--';
     hv.mcu.textContent = meta.deviceOnline ? 'online' : 'offline';
     hot.mcu.classList.toggle('on', !!meta.deviceOnline);
 
@@ -320,11 +324,12 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     get() { try { return JSON.parse(localStorage.getItem('casa3d.ceu') || '{}'); } catch { return {}; } },
     set(v) { try { localStorage.setItem('casa3d.ceu', JSON.stringify(v)); } catch { /* sem storage */ } },
   };
-  const sky = Object.assign({ mode: 'ldr', hour: 12 }, skyStore.get());
+  const sky = Object.assign({ mode: SENSORES.ldr ? 'ldr' : 'relogio', hour: 12 }, skyStore.get());
   {
     const q = new URLSearchParams(location.search);
     if (['ldr', 'relogio', 'manual'].includes(q.get('ceu'))) sky.mode = q.get('ceu');
     if (q.has('hora')) { sky.hour = Number(q.get('hora')); sky.mode = 'manual'; }
+    if (!SENSORES.ldr && sky.mode === 'ldr') sky.mode = 'relogio'; // céu pelo LDR só com o sensor
   }
   const fmtHour = (h) => `${String(Math.floor(h) % 24).padStart(2, '0')}:${String(Math.round((h % 1) * 60) % 60).padStart(2, '0')}`;
   const skyHour = $('#skyHour');
@@ -336,10 +341,17 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     $('#skyHint').textContent = {
       ldr: 'O céu segue o LDR (A0) da placa: tampe o sensor e a casa anoitece.',
       relogio: 'O céu segue a hora deste computador; o sol nasce a leste e se põe a oeste.',
-      manual: 'Escolha a hora. Só muda a visualização: a regra da luz continua usando o LDR.',
+      manual: SENSORES.ldr ? 'Escolha a hora. Só muda a visualização: a regra da luz continua usando o LDR.' : 'Escolha a hora. Só muda a visualização da casa.',
     }[sky.mode];
     if (save) skyStore.set(sky);
     onSky?.({ ...sky });
+  }
+  // sensores desligados (SENSORES no .env): some tudo deles da tela — o código fica para religar
+  {
+    const off = [];
+    if (!SENSORES.ldr) off.push('#sLuz', '#hLi', '#hL', '#skyMode [data-sky="ldr"]', 'label[for="simLuz"]', '#simLuz');
+    if (!SENSORES.garagem) off.push('#sCar', '#hCw', 'label[for="simDist"]', '#simDist');
+    for (const sel of off) document.querySelectorAll(sel).forEach((el) => { (el.closest('.hd') || el).hidden = true; });
   }
   $('#skyMode').addEventListener('click', (e) => { const b = e.target.closest('button[data-sky]'); if (b) { sky.mode = b.dataset.sky; applySky(); } });
   skyHour.addEventListener('input', () => { sky.hour = Number(skyHour.value); applySky(); });

@@ -11,6 +11,12 @@
  *   V6 CLARO/ESCURO (LDR A0)   V7 estado da janela   V8 status do alarme (buzzer D8)
  *   V9 armar alarme   V10 luminosidade % (LDR)   V11 presença (PIR D5)
  *   V12 distância do carro na garagem em cm (HC-SR04 D4/D6)
+ *   V14 detecções de presença hoje
+ *
+ * SENSORES (.env)  : LDR e HC-SR04 saíram do protoboard. Por padrão o servidor não lê nem simula
+ *                    V6/V10/V12 e a casa 3D esconde tudo deles. SENSORES=ldr,garagem religa.
+ * PAINEL_SENHA     : com a variável definida, tudo (páginas, /api e o stream) pede usuário e senha
+ *                    (Basic Auth; usuário em PAINEL_USUARIO, padrão "casa"). Sem ela fica aberto (dev).
  *
  * MODO AO VIVO     : BLYNK_TOKEN configurado no .env. O servidor lê os pinos
  *                    virtuais do seu dispositivo e envia cada mudança para a
@@ -24,6 +30,7 @@
 require("dotenv").config({ quiet: true });
 const express = require("express");
 const path = require("path");
+const crypto = require("crypto");
 
 const PORT = Number(process.env.PORT || 3000);
 const TOKEN = (process.env.BLYNK_TOKEN || "").trim();
@@ -32,8 +39,13 @@ const POLL_MS = Math.max(800, Number(process.env.POLL_INTERVAL_MS || 1200));
 const HAS_TOKEN = TOKEN && !TOKEN.startsWith("cole_aqui");
 const MODE = process.env.DEMO === "true" || !HAS_TOKEN ? "demo" : "live";
 
-// Pinos virtuais (os mesmos do firmware)
-const PINS = ["V0", "V1", "V3", "V4", "V5", "V6", "V7", "V8", "V9", "V10", "V11", "V12"];
+// Sensores opcionais (iguais às flags USAR_LDR / USAR_HCSR04 do firmware)
+const SENSORES_ON = new Set((process.env.SENSORES || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean));
+const SENSORES = { ldr: SENSORES_ON.has("ldr"), garagem: SENSORES_ON.has("garagem") };
+
+// Pinos virtuais (os mesmos do firmware); V6/V10 só com o LDR e V12 só com o HC-SR04
+const PINS = ["V0", "V1", "V3", "V4", "V5", "V7", "V8", "V9", "V11", "V14"]
+  .concat(SENSORES.ldr ? ["V6", "V10"] : [], SENSORES.garagem ? ["V12"] : []);
 const WRITABLE = new Set(["V0", "V1", "V2", "V3", "V9"]);
 
 // Limiares idênticos ao firmware
@@ -43,7 +55,37 @@ const LUZ_ESCURO_PCT = 35; // LIMIAR_ESCURO_PCT no firmware (LDR no A0)
 const ALARME_MS = 4000;
 
 const app = express();
+
+// ------------------------------------------------------------------
+// Senha do painel (Basic Auth) — o link público controla luz, porta e alarme
+// ------------------------------------------------------------------
+const SENHA = process.env.PAINEL_SENHA || "";
+const USUARIO = process.env.PAINEL_USUARIO || "casa";
+const igual = (a, b) => {
+  const x = Buffer.from(String(a)), y = Buffer.from(String(b));
+  return x.length === y.length && crypto.timingSafeEqual(x, y);
+};
+// /healthz fica aberto (sem dados) para o health check do Render e monitores
+app.get("/healthz", (req, res) => res.type("text").send("ok"));
+if (SENHA) {
+  app.use((req, res, next) => {
+    const [tipo, valor] = (req.headers.authorization || "").split(" ");
+    if (tipo === "Basic" && valor) {
+      const txt = Buffer.from(valor, "base64").toString();
+      const i = txt.indexOf(":");
+      if (i >= 0 && igual(txt.slice(0, i), USUARIO) && igual(txt.slice(i + 1), SENHA)) return next();
+    }
+    res.set("WWW-Authenticate", 'Basic realm="Casa Inteligente", charset="UTF-8"');
+    res.status(401).send("Senha necessária.");
+  });
+}
+
 app.use(express.json());
+// configuração lida pela casa 3D (mesma fonte do servidor: .env SENSORES)
+app.get("/js/config.js", (req, res) => {
+  res.type("application/javascript").set("Cache-Control", "no-store");
+  res.send(`// gerado pelo servidor a partir do .env (SENSORES)\nexport const SENSORES = ${JSON.stringify(SENSORES)};\n`);
+});
 app.use(express.static(path.join(__dirname, "public")));
 // three.js e fontes servidos localmente: a apresentação funciona sem internet
 // (só o Blynk precisa de internet, no modo ao vivo)
@@ -62,8 +104,10 @@ let state = {
   readAt: null, // hora da última leitura bem-sucedida dos sensores (ts muda a cada batimento)
   // no modo ao vivo começa vazio: a página mostra "--" até a primeira leitura real
   values: MODE === "live" ? {} : {
-    V0: "0", V1: "0", V3: "1", V4: "24.0", V5: "58", V6: "CLARO",
-    V7: "FECHADA", V8: "DESARMADO", V9: "0", V10: "72", V11: "0", V12: "120",
+    V0: "0", V1: "0", V3: "1", V4: "24.0", V5: "58",
+    V7: "FECHADA", V8: "DESARMADO", V9: "0", V11: "0", V14: "0",
+    ...(SENSORES.ldr ? { V6: "CLARO", V10: "72" } : {}),
+    ...(SENSORES.garagem ? { V12: "120" } : {}),
   },
 };
 
@@ -111,18 +155,26 @@ async function blynkGet(pins) {
   return out;
 }
 
+// pinos que de fato existem no Blynk: um datastream que falta (ex.: V14 antes de criar no Console)
+// derruba a leitura em lote; depois da 1ª leitura pino a pino só os que responderam continuam
+let pinosAtivos = PINS;
 async function pollBlynk() {
   try {
     let vals;
     try {
-      vals = await blynkGet(PINS);
+      vals = await blynkGet(pinosAtivos);
     } catch (e) {
-      // alguns servidores não aceitam leitura múltipla: lê pino a pino
+      // alguns servidores não aceitam leitura múltipla (ou falta datastream): lê pino a pino
       vals = {};
-      for (const p of PINS) {
+      for (const p of pinosAtivos) {
         try { Object.assign(vals, await blynkGet([p])); } catch { /* pino sem datastream */ }
       }
       if (!Object.keys(vals).length) throw e;
+      const ok = pinosAtivos.filter((p) => p in vals);
+      if (ok.length < pinosAtivos.length) {
+        console.warn(`[blynk] sem datastream: ${pinosAtivos.filter((p) => !(p in vals)).join(", ")} (ignorados)`);
+        pinosAtivos = ok;
+      }
     }
     const changed = setValues(vals);
     state.readAt = Date.now();
@@ -170,17 +222,21 @@ function simTick() {
   const patch = {
     V4: sim.temp.toFixed(1),
     V5: Math.round(sim.umid),
-    V10: Math.round(sim.luz),
-    V6: sim.luz < LUZ_ESCURO_PCT ? "ESCURO" : "CLARO",
     V11: sim.presenca ? 1 : 0,
-    V12: Math.round(sim.dist),
   };
+  if (SENSORES.ldr) {
+    patch.V10 = Math.round(sim.luz);
+    patch.V6 = sim.luz < LUZ_ESCURO_PCT ? "ESCURO" : "CLARO";
+  }
+  if (SENSORES.garagem) patch.V12 = Math.round(sim.dist);
+  // contador de detecções (V14): cada nova presença soma 1, como no firmware
+  if (sim.presenca && v.V11 !== "1") patch.V14 = Number(v.V14 || 0) + 1;
 
   if (auto) {
     if (sim.temp >= TEMP_ABRIR && v.V7 === "FECHADA") patch.V7 = "ABERTA";
     else if (sim.temp <= TEMP_FECHAR && v.V7 === "ABERTA") patch.V7 = "FECHADA";
-    // firmware: luz acende com presença (PIR) e só quando está escuro (LDR)
-    patch.V0 = sim.presenca && sim.luz < LUZ_ESCURO_PCT ? 1 : 0;
+    // firmware: luz acende com presença (PIR); com o LDR, só quando está escuro
+    patch.V0 = sim.presenca && (!SENSORES.ldr || sim.luz < LUZ_ESCURO_PCT) ? 1 : 0;
   }
 
   const now = Date.now();
@@ -256,10 +312,10 @@ app.post("/api/sim", (req, res) => {
   if (MODE !== "demo") return res.status(409).json({ ok: false, error: "Disponível só no modo demonstração." });
   const { temp, luz, umid, presenca, dist } = req.body || {};
   if (temp !== undefined) sim.temp = Math.min(50, Math.max(0, Number(temp)));
-  if (luz !== undefined) sim.luz = Math.min(100, Math.max(0, Number(luz)));
+  if (luz !== undefined && SENSORES.ldr) sim.luz = Math.min(100, Math.max(0, Number(luz)));
   if (umid !== undefined) sim.umid = Math.min(100, Math.max(0, Number(umid)));
   if (presenca !== undefined) sim.presenca = !!presenca;
-  if (dist !== undefined) sim.dist = Math.min(200, Math.max(2, Number(dist)));
+  if (dist !== undefined && SENSORES.garagem) sim.dist = Math.min(200, Math.max(2, Number(dist)));
   simTick();
   res.json({ ok: true });
 });
@@ -296,6 +352,8 @@ app.listen(PORT, "0.0.0.0", () => {
     .map((i) => i.address);
   console.log("\n  Casa Inteligente 3D");
   console.log(`  Modo: ${MODE === "live" ? `AO VIVO (Blynk: ${SERVER})` : "DEMONSTRAÇÃO (sensores simulados)"}`);
+  console.log(`  Sensores opcionais: LDR ${SENSORES.ldr ? "ligado" : "desligado"} · HC-SR04 ${SENSORES.garagem ? "ligado" : "desligado"}`);
+  console.log(`  Senha do painel: ${SENHA ? `ativa (usuário "${USUARIO}")` : "desligada (defina PAINEL_SENHA antes de publicar)"}`);
   console.log(`  Neste computador: http://localhost:${PORT}`);
   ips.forEach((ip) => console.log(`  No celular (mesmo Wi-Fi): http://${ip}:${PORT}`));
   console.log("");
