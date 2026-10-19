@@ -13,6 +13,12 @@ const UFL = SLAB0 + 0.35; // 3.70 piso superior
 const UH = 3.0;           // pé-direito superior
 const ROOF0 = UFL + UH;   // 6.70
 const T = 0.25;           // espessura das paredes
+// escada: degraus flutuantes na parede norte da sala, sobem para +x até o andar de cima
+const ST_N = 18, ST_R = (UFL - FL) / ST_N, ST_G = 0.25;
+const ST_X0 = -4.9;                          // pé da escada: ~1 m livre até a parede oeste para chegar nela
+const ST_X1 = ST_X0 + (ST_N - 1) * ST_G;     // -0,65: chegada no andar de cima
+const ST_Z0 = -3.5 + T / 2, ST_Z1 = ST_Z0 + 0.85; // face interna da parede norte → borda livre
+const VOID_X0 = -3.0 + T / 2;                // vão na laje começa na face interna da parede oeste de cima
 
 const damp = (cur, target, lambda, dt) => cur + (target - cur) * (1 - Math.exp(-lambda * dt));
 
@@ -121,6 +127,18 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     parent.add(m);
     return m;
   }
+  // espreguiçadeira: base 0,7 × 1,8 m, estofado e encosto erguido na cabeceira (-z local);
+  // rotY gira o conjunto em torno do centro (π/2 = cabeceira para -x)
+  function lounger(parent, x, y, z, rotY = 0) {
+    const g = new THREE.Group();
+    g.position.set(x, y, z); g.rotation.y = rotY;
+    box(g, 0.7, 0.3, 1.8, M.oak, 0, 0.15, 0, { round: 0.04 });
+    box(g, 0.66, 0.08, 1.2, M.fabric, 0, 0.34, 0.25, { round: 0.03 });
+    // ponta baixa do encosto encosta no início do estofado (z = -0,35; topo 0,38 m)
+    box(g, 0.66, 0.08, 0.7, M.fabric, 0, 0.65, -0.57, { round: 0.03 }).rotation.x = 0.9;
+    parent.add(g);
+    return g;
+  }
   // parede com aberturas reais (Shape com furos → Extrude)
   function wall(len, h, holes, mat) {
     const s = new THREE.Shape();
@@ -200,6 +218,46 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     box(hinge, 0.3, 0.025, 0.04, M.steel, w / 2, -h + 0.07, 0.05); // puxador
     servoMotor(wallMesh, u + w - 0.2, v + 0.08);
     servoSashes.push({ hinge, kind: 'awning' });
+  }
+  // cortinas (sem motor no protoboard): acompanham o servo — janelas abertas = cortinas recolhidas.
+  // Cada lado é um pivô na ponta do trilho; recolher = encolher em x (as pregas se juntam)
+  const curtains = [];
+  const curtainMat = std({ color: 0xefe8dc, roughness: 0.9, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
+  function curtainGeo(w, h) {
+    const g = new THREE.PlaneGeometry(w, h, 32, 1), pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) pos.setZ(i, Math.sin((pos.getX(i) / w) * Math.PI * 9) * 0.025);
+    g.computeVertexNormals();
+    return g;
+  }
+  function curtain(wallMesh, o, over = 0.15) {
+    // coordenadas locais da parede: z = 0 é a face interna, -z aponta para dentro da casa
+    const cw = o.w + over * 2, ch = o.h + 0.25, top = o.v + o.h + 0.15, z = -0.08;
+    box(wallMesh, cw + 0.1, 0.025, 0.025, M.steel, o.u + o.w / 2, top + 0.03, z, { cast: false });
+    for (const side of [-1, 1]) {
+      const pivot = new THREE.Group();
+      pivot.userData.dynamic = true;
+      pivot.position.set(o.u + o.w / 2 + (side * cw) / 2, top, z);
+      wallMesh.add(pivot);
+      const m = new THREE.Mesh(curtainGeo(cw / 2, ch), curtainMat);
+      m.position.set((-side * cw) / 4, -ch / 2, 0);
+      pivot.add(m);
+      curtains.push(pivot);
+    }
+  }
+  // porta de correr do terraço: a folha de dentro desliza sobre a fixa junto com as janelas do servo
+  function servoSlider(wallMesh, o) {
+    const fw = 0.06, u0 = o.u + fw, w = o.w - fw * 2, h = o.h - fw * 2, pw = w / 2 + 0.03;
+    const fixed = new THREE.Group();
+    fixed.position.set(u0, o.v + fw, T / 2 + 0.035);
+    wallMesh.add(fixed);
+    sashGeometry(fixed, pw, h, 0.05, 0);
+    const slide = new THREE.Group();
+    slide.userData.dynamic = true;
+    slide.position.set(u0 + w - pw, o.v + fw, T / 2 - 0.035);
+    wallMesh.add(slide);
+    sashGeometry(slide, pw, h, 0.05, 0);
+    box(slide, 0.025, 0.6, 0.03, M.steel, 0.1, h / 2, -0.05); // puxador (lado de dentro)
+    servoSashes.push({ hinge: slide, kind: 'slide', x0: slide.position.x, dist: w - pw - 0.04 });
   }
 
   // folhagem orgânica: icosfera com deslocamento suave pela posição
@@ -328,19 +386,28 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
 
   // Parede norte (cozinha)
   const kitO = { u: 2.0, v: 1.1, w: 2.6, h: 1.1 };
-  const nO = { u: 8.0, v: 0.9, w: 1.2, h: 1.6 };
+  const nO = { u: 10.5, v: 1.25, w: 1.2, h: 1.5 }; // acima dos primeiros degraus (antes cruzava a escada)
   const northWall = placeWall(wall(12, GH, [kitO, nO], M.plaster), '-x', 6.0, -3.5, FL);
   frameOpening(northWall, kitO, { mullions: 1 });
   frameOpening(northWall, nO, { glass: false });
-  servoCasement(northWall, nO);                 // 2ª janela do servo (fundos/cozinha)
+  servoCasement(northWall, nO);                 // 2ª janela do servo (fundos da sala)
 
   // Parede oeste
   const wO = { u: 1.0, v: 0.3, w: 2.4, h: 2.5 };
   const westWall = placeWall(wall(7, GH, [wO], M.plaster), '+z', -3.5, -6.0, FL);
   frameOpening(westWall, wO, { mullions: 1 });
+  curtain(westWall, wO, 0.05); // sobra curta: o ripado da TV começa logo depois
 
   // Laje intermediária com beiral
-  box(root, 14.7, 0.35, 7.7, M.slab, 1.0, SLAB0 + 0.175, 0);
+  // laje em 4 partes deixando o vão da escada (VOID_X0..ST_X1 × ST_Z0..ST_Z1)
+  {
+    const sx0 = -6.35, sx1 = 8.35, sz0 = -3.85, sz1 = 3.85, y = SLAB0 + 0.175;
+    const part = (x0, x1, z0, z1) => box(root, x1 - x0, 0.35, z1 - z0, M.slab, (x0 + x1) / 2, y, (z0 + z1) / 2);
+    part(sx0, sx1, ST_Z1, sz1);
+    part(sx0, VOID_X0, sz0, ST_Z1);
+    part(ST_X1, sx1, sz0, ST_Z1);
+    part(VOID_X0, ST_X1, sz0, ST_Z0);
+  }
   box(root, 14.7, 0.02, 0.02, M.frame, 1.0, SLAB0 + 0.02, 3.86, { cast: false }); // friso de sombra
   // pilares da garagem
   for (const z of [3.55, -3.55]) box(root, 0.18, SLAB0, 0.18, M.frame, 8.15, SLAB0 / 2, z);
@@ -355,7 +422,8 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // ================================================================
   // Casa — pavimento superior (em balanço sobre a garagem)
   // ================================================================
-  box(root, 11.0, 0.01, 6.0, M.woodFloor, 2.5, UFL + 0.005, -0.5, { cast: false });
+  box(root, 11.0, 0.01, 2.5 - ST_Z1, M.woodFloor, 2.5, UFL + 0.005, (2.5 + ST_Z1) / 2, { cast: false });
+  box(root, 8.0 - ST_X1, 0.01, ST_Z1 + 3.5, M.woodFloor, (8.0 + ST_X1) / 2, UFL + 0.005, (ST_Z1 - 3.5) / 2, { cast: false });
   const ribbonO = { u: 1.0, v: 0.8, w: 6.5, h: 1.5 };
   const ufSouth = placeWall(wall(11, UH, [ribbonO], M.darkPlaster), '+x', -3.0, 2.5, UFL);
   frameOpening(ufSouth, ribbonO, { mullions: 3, glass: false });
@@ -375,12 +443,15 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   const bedO = { u: 1.2, v: 0.4, w: 0.9, h: 2.2 };
   const ufEast = placeWall(wall(6, UH, [bedO], M.darkPlaster), '-z', 2.5, 8.0, UFL);
   frameOpening(ufEast, bedO, { sill: false });
+  curtain(ufEast, bedO);
   const ufNO = { u: 3.0, v: 0.9, w: 2.0, h: 1.3 };
   const ufNorth = placeWall(wall(11, UH, [ufNO], M.darkPlaster), '-x', 8.0, -3.5, UFL);
   frameOpening(ufNorth, ufNO);
+  curtain(ufNorth, ufNO);
   const slideO = { u: 1.0, v: 0, w: 3.4, h: 2.6 };
   const ufWest = placeWall(wall(6, UH, [slideO], M.darkPlaster), '+z', -3.5, -3.0, UFL);
-  frameOpening(ufWest, slideO, { mullions: 1, sill: false });
+  frameOpening(ufWest, slideO, { sill: false, glass: false });
+  servoSlider(ufWest, slideO); // abre com V7, como as janelas
 
   // Brises verticais de madeira (profundidade real, projetam sombra)
   {
@@ -462,13 +533,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     }
     // espreguiçadeiras
     // lado a lado, voltadas para a piscina (+z), longe da porta de correr; encosto sobe na cabeceira
-    const z = 1.75;
-    for (const x of [-5.45, -4.55]) {
-      box(root, 0.7, 0.3, 1.8, M.oak, x, UFL + 0.15, z, { round: 0.04 });
-      const back = box(root, 0.66, 0.08, 0.7, M.fabric, x, UFL + 0.65, z - 0.57, { round: 0.03 });
-      back.rotation.x = 0.9;
-      box(root, 0.66, 0.08, 1.2, M.fabric, x, UFL + 0.34, z + 0.25, { round: 0.03 });
-    }
+    for (const x of [-5.45, -4.55]) lounger(root, x, UFL, 1.75);
   }
 
   // ================================================================
@@ -507,12 +572,19 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // parede de TV com ripado + TV exibindo dados reais
   {
     const ripGeo = new THREE.BoxGeometry(0.04, 2.9, 0.05);
-    const n = 30, inst = shadowed(new THREE.InstancedMesh(ripGeo, M.walnut, n));
+    const n = 26, inst = shadowed(new THREE.InstancedMesh(ripGeo, M.walnut, n)); // começa depois da janela oeste
     const m4 = new THREE.Matrix4();
-    for (let i = 0; i < n; i++) { m4.makeTranslation(-5.83, FL + 1.5, -0.3 + i * 0.1); inst.setMatrixAt(i, m4); }
+    for (let i = 0; i < n; i++) { m4.makeTranslation(-5.83, FL + 1.5, 0.05 + i * 0.1); inst.setMatrixAt(i, m4); }
     interior.add(inst);
     box(interior, 0.42, 0.42, 2.6, M.cabinet, -5.6, FL + 0.21, 1.15);
   }
+  // painel da casa no andar de cima (desenhado em drawRoom) e ventilador do quarto
+  const roomCanvas = document.createElement('canvas');
+  roomCanvas.width = 1024; roomCanvas.height = 640;
+  const roomTex = new THREE.CanvasTexture(roomCanvas);
+  roomTex.colorSpace = THREE.SRGBColorSpace;
+  roomTex.anisotropy = 8;
+  let fan = null;
   const tvCanvas = document.createElement('canvas');
   // desenho em 1024×576 lógicos com escala 2× (2048×1152): texto nítido de perto e mipmaps limpos de longe
   const TV_SCALE = 2;
@@ -610,30 +682,109 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   }
 
   // Fita de LED no forro (sanca)
-  for (const [w, d, x, z] of [[11.6, 0.03, 0, 3.28], [11.6, 0.03, 0, -3.28], [0.03, 6.5, -5.78, 0], [0.03, 6.5, 5.78, 0]]) {
+  for (const [w, d, x, z] of [[11.6, 0.03, 0, 3.28], [VOID_X0 + 5.8, 0.03, (VOID_X0 - 5.8) / 2, -3.28], [5.8 - ST_X1, 0.03, (5.8 + ST_X1) / 2, -3.28], [0.03, 6.5, -5.78, 0], [0.03, 6.5, 5.78, 0]]) {
     const s = new THREE.Mesh(new THREE.BoxGeometry(w, 0.02, d), M.ledStrip);
     s.position.set(x, SLAB0 - 0.03, z);
     interior.add(s);
   }
 
+  // Escada: degraus de carvalho presos na parede norte + corrimão de aço no lado livre
+  {
+    const zc = (ST_Z0 + ST_Z1) / 2, zr = ST_Z1 - 0.04;
+    for (let k = 1; k < ST_N; k++) box(interior, ST_G + 0.02, 0.05, ST_Z1 - ST_Z0, M.oak, ST_X0 + (k - 0.5) * ST_G, FL + k * ST_R - 0.025, zc, { round: 0.01 });
+    const at = (k) => [ST_X0 + (k - 0.5) * ST_G, FL + k * ST_R];
+    for (const k of [1, 6, 11, 16]) { const [x, y] = at(k); cyl(interior, 0.015, 0.015, 0.9, M.steel, x, y + 0.45, zr, 8); }
+    const [xa, ya] = at(1), [xb, yb] = at(16), dx = xb - xa, dy = yb - ya;
+    const rail = cyl(interior, 0.02, 0.02, Math.hypot(dx, dy), M.steel, (xa + xb) / 2, (ya + yb) / 2 + 0.9, zr, 8);
+    rail.rotation.z = -Math.atan2(dx, dy);
+    // guarda-corpo de vidro na borda do vão, no andar de cima
+    const gw = ST_X1 - VOID_X0;
+    const g = new THREE.Mesh(new THREE.BoxGeometry(gw, 1.0, 0.02), M.railGlass);
+    g.position.set((VOID_X0 + ST_X1) / 2, UFL + 0.5, ST_Z1 + 0.01);
+    interior.add(g);
+    box(interior, gw, 0.04, 0.05, M.steel, (VOID_X0 + ST_X1) / 2, UFL + 1.0, ST_Z1 + 0.01);
+  }
+
   // Interior — superior (quarto e escritório)
   {
-    box(interior, 1.9, 0.35, 2.1, M.oak, 5.6, UFL + 0.175, -2.2, { round: 0.03 });
-    box(interior, 1.8, 0.22, 2.0, M.whitePlastic, 5.6, UFL + 0.46, -2.2, { round: 0.08 });
-    box(interior, 1.85, 0.12, 1.3, M.fabricGreen, 5.6, UFL + 0.6, -1.8, { round: 0.05 });
-    box(interior, 2.2, 1.1, 0.08, M.walnut, 5.6, UFL + 0.75, -3.3);
-    for (const x of [4.3, 6.9]) {
-      box(interior, 0.45, 0.5, 0.4, M.walnut, x, UFL + 0.25, -3.1);
-      cyl(interior, 0.012, 0.012, 0.2, M.steel, x, UFL + 0.6, -3.1, 6);
+    // quarto (leste): cama de casal com cabeceira estofada na parede norte, criados, tapete e banco
+    const bx = 6.4, bz0 = -3.5 + T / 2, bl = 2.0, bzc = bz0 + bl / 2;
+    box(interior, 2.6, 0.012, 2.3, M.rug, bx, UFL + 0.012, -1.75, { cast: false });
+    box(interior, 1.9, 1.0, 0.1, M.fabricGreen, bx, UFL + 0.75, bz0 + 0.05, { round: 0.04 });     // cabeceira
+    box(interior, 1.72, 0.28, bl - 0.1, M.walnut, bx, UFL + 0.14, bzc + 0.05, { round: 0.03 });    // estrado
+    box(interior, 1.62, 0.22, bl - 0.16, M.whitePlastic, bx, UFL + 0.39, bzc + 0.06, { round: 0.06 }); // colchão
+    box(interior, 1.66, 0.06, 1.35, M.fabric, bx, UFL + 0.52, bzc + 0.35, { round: 0.03 });         // edredom
+    box(interior, 1.66, 0.04, 0.42, M.fabricRust, bx, UFL + 0.56, bzc + 0.72, { round: 0.02 });     // manta nos pés
+    for (const dx of [-0.4, 0.4]) box(interior, 0.62, 0.14, 0.36, M.fabric, bx + dx, UFL + 0.57, bz0 + 0.38, { round: 0.06 }).rotation.x = -0.35; // travesseiros
+    box(interior, 1.2, 0.42, 0.36, M.oak, bx, UFL + 0.21, bzc + bl / 2 + 0.35, { round: 0.03 });    // banco nos pés
+    for (const x of [bx - 1.1, bx + 1.1]) {
+      box(interior, 0.45, 0.5, 0.4, M.walnut, x, UFL + 0.25, bz0 + 0.22, { round: 0.02 });
+      box(interior, 0.36, 0.012, 0.012, M.steel, x, UFL + 0.32, bz0 + 0.43);                     // puxador da gaveta
+      cyl(interior, 0.012, 0.012, 0.2, M.steel, x, UFL + 0.6, bz0 + 0.22, 6);
       const ls = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.2, 24, 1, true), M.lampShade);
-      ls.position.set(x, UFL + 0.72, -3.1);
+      ls.position.set(x, UFL + 0.72, bz0 + 0.22);
       interior.add(ls);
-      sph(interior, 0.04, M.bulb, x, UFL + 0.72, -3.1);
+      sph(interior, 0.04, M.bulb, x, UFL + 0.72, bz0 + 0.22);
     }
-    box(interior, 1.4, 0.04, 0.6, M.oak, -1.3, UFL + 0.74, -3.05);
-    box(interior, 0.6, 0.36, 0.03, M.black, -1.3, UFL + 1.0, -3.2);
+    // ventilador de teto: gira conforme a temperatura do DHT11 (V4), parado abaixo de 26 °C
+    cyl(interior, 0.012, 0.012, 0.32, M.steel, bx, ROOF0 - 0.16, bzc + 0.3, 8);
+    fan = new THREE.Group();
+    fan.userData.dynamic = true;
+    fan.position.set(bx, ROOF0 - 0.38, bzc + 0.3);
+    interior.add(fan);
+    fan.add(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.1, 20), M.black));
+    for (let i = 0; i < 4; i++) {
+      const arm = new THREE.Group();
+      arm.rotation.y = (i * Math.PI) / 2;
+      fan.add(arm);
+      box(arm, 0.6, 0.012, 0.13, M.walnut, 0.4, -0.02, 0, { cast: false, round: 0.005 });
+    }
+
+    // armário (centro, parede norte): portas marcadas e puxadores
     box(interior, 2.2, 2.4, 0.6, M.cabinet, 1.8, UFL + 1.2, -3.05);
-    plant(interior, 0.2, 2.0, 0.8, UFL);
+    for (const x of [1.25, 1.8, 2.35]) box(interior, 0.008, 2.3, 0.01, M.black, x, UFL + 1.2, -2.745, { cast: false });
+    for (const x of [1.71, 1.89]) box(interior, 0.02, 0.4, 0.03, M.steel, x, UFL + 1.2, -2.73);
+
+    // escritório (oeste): estante na parede norte, mesa sob a janela em fita, cadeira
+    {
+      // estante na parede oeste, entre a porta de correr e o canto sul (a parede norte fica livre p/ a chegada da escada)
+      const ez = 1.6, ew = 1.2, eh = 1.9, ex = -3.0 + T / 2 + 0.16;
+      for (const dz of [-ew / 2, ew / 2]) box(interior, 0.32, eh, 0.03, M.walnut, ex, UFL + eh / 2, ez + dz);
+      const shelves = [0.02, 0.48, 0.94, 1.4, eh - 0.015];
+      for (const y of shelves) box(interior, 0.32, 0.03, ew, M.walnut, ex, UFL + y, ez);
+      const bookMats = [M.fabricGreen, M.fabricRust, M.whitePlastic, M.black, M.oak];
+      let n = 0;
+      for (let r = 0; r < 4; r++) {
+        let z = ez - ew / 2 + 0.06;
+        while (z < ez + ew / 2 - 0.12) {
+          const w = 0.03 + ((n * 7) % 5) * 0.008, h = 0.24 + ((n * 11) % 7) * 0.025;
+          if ((n * 13) % 9 !== 0) box(interior, 0.22, h, w, bookMats[n % bookMats.length], ex + 0.02, UFL + shelves[r] + 0.015 + h / 2, z + w / 2, { cast: false });
+          z += w + 0.006; n++;
+        }
+      }
+    }
+    {
+      const dx = -0.6, dz = 2.5 - T / 2 - 0.35;
+      box(interior, 1.4, 0.04, 0.65, M.oak, dx, UFL + 0.74, dz, { round: 0.01 });
+      for (const [lx, lz] of [[-0.66, -0.28], [0.66, -0.28], [-0.66, 0.28], [0.66, 0.28]]) box(interior, 0.035, 0.72, 0.035, M.black, dx + lx, UFL + 0.36, dz + lz);
+      box(interior, 0.62, 0.37, 0.03, M.black, dx, UFL + 1.08, dz + 0.18);                      // monitor
+      box(interior, 0.05, 0.16, 0.05, M.black, dx, UFL + 0.84, dz + 0.2);
+      box(interior, 0.42, 0.02, 0.14, M.whitePlastic, dx, UFL + 0.77, dz - 0.12);                // teclado
+      // cadeira giratória
+      const cz = dz - 0.62;
+      cyl(interior, 0.26, 0.26, 0.03, M.black, dx, UFL + 0.03, cz, 20);
+      cyl(interior, 0.025, 0.025, 0.42, M.steel, dx, UFL + 0.24, cz, 8);
+      box(interior, 0.48, 0.07, 0.46, M.black, dx, UFL + 0.48, cz, { round: 0.03 });
+      box(interior, 0.46, 0.52, 0.06, M.black, dx, UFL + 0.82, cz - 0.24, { round: 0.03 });
+    }
+    plant(interior, 3.5, 1.9, 0.8, UFL);
+
+    // painel da casa na parede norte (entre estante e armário): mesmos dados do painel/TV
+    const pm = std({ color: 0x000000, emissive: 0xffffff, emissiveMap: roomTex, emissiveIntensity: 0.9, roughness: 0.6, envMapIntensity: 0.25 });
+    box(interior, 0.48, 0.32, 0.02, M.black, 0.25, UFL + 1.45, -3.5 + T / 2 + 0.01);
+    const pn = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.28), pm);
+    pn.position.set(0.25, UFL + 1.45, -3.5 + T / 2 + 0.022);
+    interior.add(pn);
   }
 
   // ================================================================
@@ -650,6 +801,23 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
       inst.setColorAt(i, c.setHSL(0.07, 0.25, 0.75 + (i * 37 % 10) / 50));
     }
     root.add(inst);
+  }
+  // deck da sala: conjunto de estar baixo na ponta oeste e vasos nas pontas — o centro fica livre
+  // para a vista da sala (nada passa de ~0,8 m de altura)
+  {
+    const y = 0.12, cz = 5.35;
+    box(root, 2.5, 0.01, 2.0, M.rug, -4.9, y + 0.005, cz + 0.25, { cast: false });
+    for (const x of [-5.55, -4.25]) {
+      box(root, 0.78, 0.26, 0.78, M.oak, x, y + 0.13, cz, { round: 0.03 });                       // base
+      box(root, 0.7, 0.12, 0.68, M.fabric, x, y + 0.32, cz + 0.03, { round: 0.04 });              // assento
+      box(root, 0.7, 0.36, 0.14, M.fabric, x, y + 0.52, cz - 0.31, { round: 0.05 }).rotation.x = -0.18; // encosto
+      for (const dx of [-0.36, 0.36]) box(root, 0.07, 0.2, 0.78, M.oak, x + dx, y + 0.36, cz, { round: 0.02 }); // braços
+    }
+    cyl(root, 0.32, 0.32, 0.04, M.walnut, -4.9, y + 0.36, cz + 0.85, 28);                        // mesinha
+    cyl(root, 0.04, 0.06, 0.34, M.black, -4.9, y + 0.17, cz + 0.85, 10);
+    cyl(root, 0.18, 0.18, 0.02, M.black, -4.9, y + 0.01, cz + 0.85, 20);
+    plant(root, -6.25, 6.45, 0.7, y);
+    plant(root, 1.4, 6.45, 0.7, y);
   }
   // piscina
   {
@@ -671,13 +839,10 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const pl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.06, 0.02), M.poolLight);
     pl.position.set(px, 0.07, pz - pd / 2 + 0.06);
     root.add(pl);
-    // espreguiçadeiras da piscina
-    for (const x of [-5.4, -4.0]) {
-      box(root, 0.7, 0.3, 1.8, M.oak, x, 0.15, 11.2, { round: 0.04 });
-      box(root, 0.66, 0.08, 1.2, M.fabric, x, 0.34, 11.45, { round: 0.03 });
-      const b = box(root, 0.66, 0.08, 0.7, M.fabric, x, 0.52, 10.6, { round: 0.03 });
-      b.rotation.x = 0.9;
-    }
+    // espreguiçadeiras no gramado a oeste da piscina, pés voltados para a água, 40 cm da borda de pedra
+    // (ao sul não cabem: entre a borda e o fim do terreno sobram só 1,25 m)
+    const lx = px - pw / 2 - 0.35 - 0.4 - 0.9;
+    for (const dz of [-0.55, 0.55]) lounger(root, lx, 0, pz + dz, Math.PI / 2);
   }
   // caminho de pedras até a porta + calçada da garagem
   for (let i = 0; i < 9; i++) box(root, 1.5, 0.06, 0.55, M.stone, 3.0, 0.03, 4.4 + i * 0.85, { round: 0.02 });
@@ -846,7 +1011,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const spots = [];
     for (let x = -14; x <= 14; x += 0.9) spots.push([x, -10.9, 0.62 + Math.sin(x * 1.3) * 0.12]);
     for (let z = -9; z <= 7; z += 0.95) spots.push([-14.8, z, 0.6 + Math.cos(z) * 0.1]);
-    for (const [x, z] of [[-6.9, 4.4], [-7.1, 6.8], [5.85, 4.3], [1.0, 4.4], [9.4, 3.6], [9.6, -1.2], [9.5, -3.4], [-7.2, -2.0], [-7.0, 0.5]]) spots.push([x, z, 0.5 + Math.abs((x * z) % 0.25)]);
+    for (const [x, z] of [[-7.3, 4.4], [-7.3, 6.8], [5.85, 4.3], [1.1, 7.75], [9.4, 3.6], [9.6, -1.2], [9.5, -3.4], [-7.2, -2.0], [-7.0, 0.5]]) spots.push([x, z, 0.5 + Math.abs((x * z) % 0.25)]);
     const blobs = spots.map(([x, z, s]) => [x, s * 0.75, z, s]);
     foliage(root, blobs, hi ? 22 : 14, 0.7, 1);
   }
@@ -855,7 +1020,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const geo = new THREE.IcosahedronGeometry(0.032, 1);
     const cols = [0xf2c14e, 0xe86a7a, 0xffffff, 0xb07fd1, 0xf29d52];
     const pts = [];
-    const beds = [[4.4, 6.0, 3.95, 4.7], [-7.4, -6.6, 3.8, 7.2], [0.2, 1.7, 4.0, 4.7]];
+    const beds = [[4.4, 6.0, 3.95, 4.7], [-7.7, -6.85, 3.8, 7.2], [0.5, 1.7, 7.3, 7.95]]; // fora do deck (x -6,6..1,8 · z 3,9..6,8)
     let seed = 1;
     const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
     for (const [x0, x1, z0, z1] of beds) for (let i = 0; i < 160; i++) pts.push([x0 + r() * (x1 - x0), z0 + r() * (z1 - z0), r()]);
@@ -1181,8 +1346,30 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // o primeiro desenho pode sair antes das fontes carregarem: redesenha quando estiverem prontas
   if (document.fonts) {
     Promise.all(['500 36px "DM Sans"', '700 40px "DM Sans"', '700 168px "Unbounded"']
-      .map((f) => document.fonts.load(f))).then(() => drawTV(tvV, tvMeta, true), () => {});
+      .map((f) => document.fonts.load(f))).then(() => { drawTV(tvV, tvMeta, true); drawRoom(tvV, true); }, () => {});
   }
+
+  // painel da casa (andar de cima): temperatura grande + umidade, janela e alarme
+  let roomSig = '';
+  function drawRoom(v = tvV, force = false) {
+    const temp = fmt.temp(v.V4);
+    const rows = [['UMIDADE', `${fmt.umid(v.V5)}%`], ['JANELA', fmt.janela(v.V7)], ['ALARME', fmt.alarme(v.V8, v.V9)]];
+    const sig = JSON.stringify([temp, rows]);
+    if (sig === roomSig && !force) return;
+    roomSig = sig;
+    const g = roomCanvas.getContext('2d'), W = roomCanvas.width, H = roomCanvas.height;
+    g.fillStyle = '#0d1828'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#5ee7ff'; g.font = '700 48px "DM Sans", sans-serif'; g.fillText('CASA', 56, 90);
+    g.fillStyle = '#ffffff'; g.font = '700 190px "Unbounded", sans-serif'; g.fillText(`${temp}°`, 44, 330);
+    rows.forEach(([k, val], i) => {
+      const y = 430 + i * 72;
+      g.fillStyle = '#9fb4cc'; g.font = '700 40px "DM Sans", sans-serif'; g.fillText(k, 56, y);
+      g.fillStyle = val === 'Disparado' ? '#ff5468' : '#ffffff'; g.font = '700 52px "DM Sans", sans-serif';
+      g.textAlign = 'right'; g.fillText(val, W - 56, y); g.textAlign = 'left';
+    });
+    roomTex.needsUpdate = true;
+  }
+  drawRoom({});
 
   function setState(v, meta) {
     S.lightT = v.V0 === '1' ? 1 : 0;
@@ -1198,6 +1385,8 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     lockLedMat.color.set(S.doorT ? 0x36e39a : 0xff3b55);
     lockLedMat.emissive.set(S.doorT ? 0x36e39a : 0xff3b55);
     drawTV(v, meta);
+    drawRoom(v);
+    S.temp = Number(v.V4);
   }
   // cm medidos pelo HC-SR04 → metros entre o sensor e o para-choque na cena.
   // Na maquete o carrinho trabalha entre ~5 e 100 cm; acima disso a vaga está livre.
@@ -1231,10 +1420,16 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
 
     // janela do servo (V7) — velocidade de servo SG90
     S.win = damp(S.win, S.winT, 3.8, dt);
+    // ventilador do quarto: começa a girar em 26 °C e chega ao máximo em 30 °C (mesma faixa da janela automática)
+    const fanT = S.temp >= 26 ? THREE.MathUtils.clamp((S.temp - 26) / 4, 0.3, 1) * 9 : 0;
+    S.fan = damp(S.fan || 0, fanT, 1.2, dt);
+    if (fan) fan.rotation.y += S.fan * dt;
     for (const sh of servoSashes) {
       if (sh.kind === 'casement') sh.hinge.rotation.y = -S.win * THREE.MathUtils.degToRad(82);
+      else if (sh.kind === 'slide') sh.hinge.position.x = sh.x0 - S.win * sh.dist;
       else sh.hinge.rotation.x = -S.win * THREE.MathUtils.degToRad(38);
     }
+    for (const c of curtains) c.scale.x = 1 - S.win * 0.8;
 
     // alarme
     S.alarm = damp(S.alarm, S.alarmT, 8, dt);

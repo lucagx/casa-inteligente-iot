@@ -12,6 +12,8 @@ export const fmt = {
   pres: (v) => (v === undefined || v === '' ? '--' : String(v) === '1' ? 'Detectada' : 'Livre'),
   // V7 → "Aberta" / "Fechada" / "--"
   janela: (v) => (v === 'ABERTA' ? 'Aberta' : v === 'FECHADA' ? 'Fechada' : '--'),
+  // V8/V9 → "Disparado" / "Armado" / "Desarmado"
+  alarme: (v8, v9) => (/ATIVO/i.test(v8 || '') ? 'Disparado' : String(v9) === '1' ? 'Armado' : 'Desarmado'),
   // timestamp (ms) → "hh:mm:ss" ou "--:--:--"
   hora: (ts) => (Number.isFinite(ts) && ts > 0 ? new Date(ts).toLocaleTimeString('pt-BR') : '--:--:--'),
 };

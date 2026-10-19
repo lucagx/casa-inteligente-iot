@@ -27,7 +27,7 @@ const DEVICES = [
   { key: 'luz', pin: 'V0', write: 'V0', icon: 'bulb', name: 'Iluminação', hw: 'LED · D1 · V0', on: (v) => v.V0 === '1', label: (on) => (on ? 'Ligada' : 'Desligada') },
   { key: 'porta', pin: 'V1', write: 'V1', icon: 'door', name: 'Porta', hw: 'LED trava · D0 · V1', on: (v) => v.V1 === '1', label: (on) => (on ? 'Destrancada' : 'Trancada') },
   { key: 'janela', pin: 'V7', write: 'V2', icon: 'window', name: 'Janela', hw: 'Servo SG90 · D7 · V2/V7', on: (v) => v.V7 === 'ABERTA', label: (on, v) => fmt.janela(v.V7) },
-  { key: 'alarme', pin: 'V9', write: 'V9', icon: 'siren', name: 'Alarme', hw: 'Buzzer · D8 · V8/V9', on: (v) => v.V9 === '1', label: (on, v) => (/ATIVO/.test(v.V8 || '') ? 'DISPARADO' : on ? 'Armado' : 'Desarmado'), anyMode: true },
+  { key: 'alarme', pin: 'V9', write: 'V9', icon: 'siren', name: 'Alarme', hw: 'Buzzer · D8 · V8/V9', on: (v) => v.V9 === '1', label: (on, v) => { const t = fmt.alarme(v.V8, v.V9); return t === 'Disparado' ? 'DISPARADO' : t; }, anyMode: true },
 ];
 
 // Faixas do HC-SR04 da garagem (mesmas do modelo 3D)
