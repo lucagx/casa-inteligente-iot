@@ -1,0 +1,29 @@
+# Blueprint do Render (render.com → New → Blueprint → este repositório).
+# Passo a passo e observações em docs/HOSPEDAGEM.md.
+services:
+  - type: web
+    name: casa-inteligente
+    runtime: node
+    plan: free
+    region: virginia
+    branch: main
+    rootDir: app-3d
+    buildCommand: npm ci
+    startCommand: node server.js
+    # /healthz responde sem senha e sem dados; /api/state exige a senha (401)
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: POLL_INTERVAL_MS
+        value: "1200"
+      - key: PAINEL_USUARIO
+        value: casa
+      # segredos: preenchidos no painel do Render, nunca no repositório
+      - key: BLYNK_TOKEN
+        sync: false
+      - key: BLYNK_SERVER
+        sync: false
+      - key: PAINEL_SENHA
+        sync: false

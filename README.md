@@ -33,3 +33,8 @@ npm start          # http://localhost:3000
 
 Sem `app-3d/.env` abre em **modo demonstração**. Para espelhar a placa, copie
 `app-3d/.env.example` para `app-3d/.env` e preencha `BLYNK_TOKEN` e `BLYNK_SERVER`.
+
+## Publicado no Render
+
+O servidor também roda no Render (plano Free), configurado pelo `render.yaml` da raiz, com senha obrigatória
+e deploy automático a cada push na `main`. Passo a passo, variáveis e cuidados: [`docs/HOSPEDAGEM.md`](docs/HOSPEDAGEM.md).

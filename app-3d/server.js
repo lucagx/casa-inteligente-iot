@@ -65,6 +65,11 @@ const igual = (a, b) => {
   const x = Buffer.from(String(a)), y = Buffer.from(String(b));
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
+// no Render (variável RENDER) o link é público: sem senha o servidor não sobe
+if (process.env.RENDER && !SENHA) {
+  console.error("[painel] PAINEL_SENHA não definida no Render — defina a variável no painel do serviço.");
+  process.exit(1);
+}
 // /healthz fica aberto (sem dados) para o health check do Render e monitores
 app.get("/healthz", (req, res) => res.type("text").send("ok"));
 if (SENHA) {
@@ -354,7 +359,11 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  Modo: ${MODE === "live" ? `AO VIVO (Blynk: ${SERVER})` : "DEMONSTRAÇÃO (sensores simulados)"}`);
   console.log(`  Sensores opcionais: LDR ${SENSORES.ldr ? "ligado" : "desligado"} · HC-SR04 ${SENSORES.garagem ? "ligado" : "desligado"}`);
   console.log(`  Senha do painel: ${SENHA ? `ativa (usuário "${USUARIO}")` : "desligada (defina PAINEL_SENHA antes de publicar)"}`);
-  console.log(`  Neste computador: http://localhost:${PORT}`);
-  ips.forEach((ip) => console.log(`  No celular (mesmo Wi-Fi): http://${ip}:${PORT}`));
+  if (process.env.RENDER_EXTERNAL_URL) {
+    console.log(`  Publicado em: ${process.env.RENDER_EXTERNAL_URL}`);
+  } else {
+    console.log(`  Neste computador: http://localhost:${PORT}`);
+    ips.forEach((ip) => console.log(`  No celular (mesmo Wi-Fi): http://${ip}:${PORT}`));
+  }
   console.log("");
 });

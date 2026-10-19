@@ -15,3 +15,4 @@ docs/*
 !docs/capturas/
 !docs/documentacao/
 !docs/arquitetura_iot_iob.png
+!docs/HOSPEDAGEM.md
