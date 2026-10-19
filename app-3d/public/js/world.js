@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import * as TX from './textures.js';
+import { fmt } from './format.js';
 
 // ---------- medidas da casa (metros) ----------
 const FL = 0.15;          // piso do térreo
@@ -12,11 +13,19 @@ const UFL = SLAB0 + 0.35; // 3.70 piso superior
 const UH = 3.0;           // pé-direito superior
 const ROOF0 = UFL + UH;   // 6.70
 const T = 0.25;           // espessura das paredes
+// piscina (centro, largura x, comprimento z) e profundidade real: o terreno tem um furo do tamanho dela
+const POOL = { x: -3.6, z: 8.9, w: 6.0, d: 3.0, depth: 1.3 };
+// escada: degraus flutuantes na parede norte da sala, sobem para +x até o andar de cima
+const ST_N = 18, ST_R = (UFL - FL) / ST_N, ST_G = 0.25;
+const ST_X0 = -4.9;                          // pé da escada: ~1 m livre até a parede oeste para chegar nela
+const ST_X1 = ST_X0 + (ST_N - 1) * ST_G;     // -0,65: chegada no andar de cima
+const ST_Z0 = -3.5 + T / 2, ST_Z1 = ST_Z0 + 0.85; // face interna da parede norte → borda livre
+const VOID_X0 = -3.0 + T / 2;                // vão na laje começa na face interna da parede oeste de cima
 
 const damp = (cur, target, lambda, dt) => cur + (target - cur) * (1 - Math.exp(-lambda * dt));
 
 // quality: 'high' | 'medium' | 'low' (ver main.js → perfis de qualidade)
-export function buildWorld(scene, { quality = 'high' } = {}) {
+export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, garagem: true } } = {}) {
   const hi = quality === 'high';
   // perfis com MSAA usam alpha-to-coverage: borda de folha/grama suave em vez de serrilhada e "cintilante"
   const a2c = quality !== 'low';
@@ -80,14 +89,17 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
 
   const waterNormal = TX.waterNormal();
   M.water = new THREE.MeshPhysicalMaterial({
-    color: 0x2aa3bd, metalness: 0, roughness: 0.04, normalMap: waterNormal, normalScale: new THREE.Vector2(0.35, 0.35),
-    transparent: true, opacity: 0.78, clearcoat: 1, clearcoatRoughness: 0.05, depthWrite: false,
+    // pouco opaca e com reflexo moderado: o fundo de 1,3 m aparece (antes parecia um piso sólido)
+    color: 0x2a9cc0, metalness: 0, roughness: 0.06, normalMap: waterNormal, normalScale: new THREE.Vector2(0.3, 0.3),
+    transparent: true, opacity: 0.55, clearcoat: 0.5, clearcoatRoughness: 0.08, envMapIntensity: 0.6, depthWrite: false,
   });
 
   // luzes emissivas controladas pelo estado da "Luz" (V0)
   const warmEmissive = () => std({ color: 0xfff4e2, emissive: 0xffc27a, emissiveIntensity: 0, roughness: 0.4 });
-  M.lampShade = warmEmissive();
-  M.lampShade.side = THREE.DoubleSide;
+  // cúpulas opacas (não acendem); só a lâmpada dentro delas brilha
+  M.lampShade = std({ color: 0xece6dc, roughness: 0.75, side: THREE.DoubleSide });
+  M.lampMetal = std({ color: 0x1d1f22, roughness: 0.45, metalness: 0.6, side: THREE.DoubleSide });
+  M.bulb = warmEmissive();
   M.ledStrip = warmEmissive();
   M.downlight = warmEmissive();
   M.bollard = warmEmissive();
@@ -110,6 +122,60 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     m.position.set(x, y, z);
     parent.add(m);
     return m;
+  }
+  // laje w × h × d com topo em topY e um furo retangular [x0, x1, z0, z1]; r = raio das bordas.
+  // UVs refeitos para o mesmo mapeamento 0..1 por face de uma BoxGeometry (texturas e repeat iguais)
+  function slabWithHole(w, h, d, [x0, x1, z0, z1], mat, topY, r) {
+    const sh = new THREE.Shape();
+    sh.moveTo(-w / 2 + r, -d / 2 + r); sh.lineTo(w / 2 - r, -d / 2 + r); sh.lineTo(w / 2 - r, d / 2 - r); sh.lineTo(-w / 2 + r, d / 2 - r); sh.closePath();
+    // o chanfro cresce r para dentro do furo: o furo desenhado é r maior para terminar na medida certa
+    const hp = new THREE.Path();
+    hp.moveTo(x0 - r, z0 - r); hp.lineTo(x0 - r, z1 + r); hp.lineTo(x1 + r, z1 + r); hp.lineTo(x1 + r, z0 - r); hp.closePath();
+    sh.holes.push(hp);
+    const g = new THREE.ExtrudeGeometry(sh, { depth: h - 2 * r, bevelEnabled: true, bevelThickness: r, bevelSize: r, bevelSegments: 3, curveSegments: 1 });
+    g.rotateX(Math.PI / 2);                 // forma (x, y) → chão (x, z); extrusão para baixo
+    g.translate(0, topY - r, 0);
+    g.computeVertexNormals();
+    const pos = g.attributes.position, nrm = g.attributes.normal, uv = g.attributes.uv, y0 = topY - h;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const ax = Math.abs(nrm.getX(i)), ay = Math.abs(nrm.getY(i)), az = Math.abs(nrm.getZ(i));
+      if (ay >= ax && ay >= az) uv.setXY(i, x / w + 0.5, 0.5 - z / d);
+      else if (ax > az) uv.setXY(i, z / d + 0.5, (y - y0) / h);
+      else uv.setXY(i, x / w + 0.5, (y - y0) / h);
+    }
+    const m = shadowed(new THREE.Mesh(g, mat), false, true);
+    root.add(m);
+    return m;
+  }
+  // caixa com UV em metros (azulejo do mesmo tamanho em qualquer face; o material usa repeat 1)
+  function tiledBox(parent, w, h, d, mat, x, y, z) {
+    const g = new THREE.BoxGeometry(w, h, d), uv = g.attributes.uv;
+    const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]]; // +x, -x, +y, -y, +z, -z
+    for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) { const i = f * 4 + k; uv.setXY(i, uv.getX(i) * dims[f][0], uv.getY(i) * dims[f][1]); }
+    const m = shadowed(new THREE.Mesh(g, mat), false, true);
+    m.position.set(x, y, z);
+    parent.add(m);
+    return m;
+  }
+  // lâmpada (esfera pequena, não projeta sombra)
+  function sph(parent, r, mat, x, y, z) {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 10), mat);
+    m.position.set(x, y, z);
+    parent.add(m);
+    return m;
+  }
+  // espreguiçadeira: base 0,7 × 1,8 m, estofado e encosto erguido na cabeceira (-z local);
+  // rotY gira o conjunto em torno do centro (π/2 = cabeceira para -x)
+  function lounger(parent, x, y, z, rotY = 0) {
+    const g = new THREE.Group();
+    g.position.set(x, y, z); g.rotation.y = rotY;
+    box(g, 0.7, 0.3, 1.8, M.oak, 0, 0.15, 0, { round: 0.04 });
+    box(g, 0.66, 0.08, 1.2, M.fabric, 0, 0.34, 0.25, { round: 0.03 });
+    // ponta baixa do encosto encosta no início do estofado (z = -0,35; topo 0,38 m)
+    box(g, 0.66, 0.08, 0.7, M.fabric, 0, 0.65, -0.57, { round: 0.03 }).rotation.x = 0.9;
+    parent.add(g);
+    return g;
   }
   // parede com aberturas reais (Shape com furos → Extrude)
   function wall(len, h, holes, mat) {
@@ -191,6 +257,46 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     servoMotor(wallMesh, u + w - 0.2, v + 0.08);
     servoSashes.push({ hinge, kind: 'awning' });
   }
+  // cortinas (sem motor no protoboard): acompanham o servo — janelas abertas = cortinas recolhidas.
+  // Cada lado é um pivô na ponta do trilho; recolher = encolher em x (as pregas se juntam)
+  const curtains = [];
+  const curtainMat = std({ color: 0xefe8dc, roughness: 0.9, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
+  function curtainGeo(w, h) {
+    const g = new THREE.PlaneGeometry(w, h, 32, 1), pos = g.attributes.position;
+    for (let i = 0; i < pos.count; i++) pos.setZ(i, Math.sin((pos.getX(i) / w) * Math.PI * 9) * 0.025);
+    g.computeVertexNormals();
+    return g;
+  }
+  function curtain(wallMesh, o, over = 0.15) {
+    // coordenadas locais da parede: z = 0 é a face interna, -z aponta para dentro da casa
+    const cw = o.w + over * 2, ch = o.h + 0.25, top = o.v + o.h + 0.15, z = -0.08;
+    box(wallMesh, cw + 0.1, 0.025, 0.025, M.steel, o.u + o.w / 2, top + 0.03, z, { cast: false });
+    for (const side of [-1, 1]) {
+      const pivot = new THREE.Group();
+      pivot.userData.dynamic = true;
+      pivot.position.set(o.u + o.w / 2 + (side * cw) / 2, top, z);
+      wallMesh.add(pivot);
+      const m = new THREE.Mesh(curtainGeo(cw / 2, ch), curtainMat);
+      m.position.set((-side * cw) / 4, -ch / 2, 0);
+      pivot.add(m);
+      curtains.push(pivot);
+    }
+  }
+  // porta de correr do terraço: a folha de dentro desliza sobre a fixa junto com as janelas do servo
+  function servoSlider(wallMesh, o) {
+    const fw = 0.06, u0 = o.u + fw, w = o.w - fw * 2, h = o.h - fw * 2, pw = w / 2 + 0.03;
+    const fixed = new THREE.Group();
+    fixed.position.set(u0, o.v + fw, T / 2 + 0.035);
+    wallMesh.add(fixed);
+    sashGeometry(fixed, pw, h, 0.05, 0);
+    const slide = new THREE.Group();
+    slide.userData.dynamic = true;
+    slide.position.set(u0 + w - pw, o.v + fw, T / 2 - 0.035);
+    wallMesh.add(slide);
+    sashGeometry(slide, pw, h, 0.05, 0);
+    box(slide, 0.025, 0.6, 0.03, M.steel, 0.1, h / 2, -0.05); // puxador (lado de dentro)
+    servoSashes.push({ hinge: slide, kind: 'slide', x0: slide.position.x, dist: w - pw - 0.04 });
+  }
 
   // folhagem orgânica: icosfera com deslocamento suave pela posição
   function blobGeo(r, detail = 3, amp = 0.18, seed = 1) {
@@ -208,7 +314,9 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     return g;
   }
 
-  const lightMats = [M.lampShade, M.ledStrip, M.downlight, M.bollard];
+  // emissivo de cada tipo de luz [dia, noite]. O bloom noturno começa em ~1,25: fitas longas ficam abaixo
+  // (brilham sem espalhar); só as lâmpadas pequenas passam um pouco do limite e ganham um halo discreto
+  const lightMats = [[M.bulb, 1.0, 2.0], [M.ledStrip, 0.5, 0.9], [M.downlight, 0.5, 0.9], [M.bollard, 0.6, 1.2]];
   // "Poças de luz": círculos aditivos no chão que imitam o facho de um spot sem custo de luz real
   const poolTex = (() => {
     const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -246,9 +354,11 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // Terreno flutuante (maquete em corte)
   // ================================================================
   const LW = 32, LD = 24;
-  box(root, LW, 0.4, LD, M.grass, 0, -0.2, 0, { round: 0.18 });
-  const soilM = box(root, LW - 0.35, 1.6, LD - 0.35, M.soil, 0, -1.2, 0, { round: 0.12 });
-  soilM.material.map.repeat.set(5, 1);
+  // grama e solo são lajes com o furo da piscina (Extrude com chanfro = bordas arredondadas como antes)
+  const poolHole = [POOL.x - POOL.w / 2, POOL.x + POOL.w / 2, POOL.z - POOL.d / 2, POOL.z + POOL.d / 2];
+  slabWithHole(LW, 0.4, LD, poolHole, M.grass, 0, 0.18);
+  slabWithHole(LW - 0.35, 1.6, LD - 0.35, poolHole, M.soil, -0.4, 0.12);
+  M.soil.map.repeat.set(5, 1);
   box(root, LW - 0.9, 2.2, LD - 0.9, M.rock, 0, -3.1, 0, { round: 0.3 });
   box(root, LW - 3.5, 1.2, LD - 3.5, M.rock, 0, -4.6, 0, { round: 0.5 });
 
@@ -270,14 +380,16 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   box(jamb, 0.07, doorO.h, T + 0.05, M.frame, doorO.u + doorO.w - 0.035, doorO.h / 2, T / 2);
   box(jamb, doorO.w, 0.07, T + 0.05, M.frame, doorO.u + doorO.w / 2, doorO.h - 0.035, T / 2);
   box(jamb, doorO.w + 0.5, 0.04, 0.9, M.stone, doorO.u + doorO.w / 2, -0.13, T + 0.45); // soleira/degrau
+  // fundo do vão fica no mesmo plano do topo da base (y = FL) e piscava: placa de pedra 1,2 cm acima cobre os dois
+  box(jamb, doorO.w - 0.14, 0.012, T + 0.05, M.stone, doorO.u + doorO.w / 2, 0.006, T / 2, { cast: false });
 
   // Folha da porta (pivotada na dobradiça)
   const doorHinge = new THREE.Group();
   doorHinge.userData.dynamic = true;
   doorHinge.position.set(doorO.u + 0.07, 0, T * 0.62);
   southWall.add(doorHinge);
-  const leafW = doorO.w - 0.14, leafH = doorO.h - 0.075;
-  box(doorHinge, leafW, leafH, 0.06, M.walnut, leafW / 2, leafH / 2, 0);
+  const leafW = doorO.w - 0.14, leafH = doorO.h - 0.075 - 0.012;
+  box(doorHinge, leafW, leafH, 0.06, M.walnut, leafW / 2, 0.012 + leafH / 2, 0);
   // puxador vertical em aço
   box(doorHinge, 0.03, 1.2, 0.03, M.steel, leafW - 0.12, 1.15, 0.09);
   box(doorHinge, 0.03, 0.03, 0.06, M.steel, leafW - 0.12, 0.6, 0.05);
@@ -316,19 +428,28 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
 
   // Parede norte (cozinha)
   const kitO = { u: 2.0, v: 1.1, w: 2.6, h: 1.1 };
-  const nO = { u: 8.0, v: 0.9, w: 1.2, h: 1.6 };
+  const nO = { u: 10.5, v: 1.25, w: 1.2, h: 1.5 }; // acima dos primeiros degraus (antes cruzava a escada)
   const northWall = placeWall(wall(12, GH, [kitO, nO], M.plaster), '-x', 6.0, -3.5, FL);
   frameOpening(northWall, kitO, { mullions: 1 });
   frameOpening(northWall, nO, { glass: false });
-  servoCasement(northWall, nO);                 // 2ª janela do servo (fundos/cozinha)
+  servoCasement(northWall, nO);                 // 2ª janela do servo (fundos da sala)
 
   // Parede oeste
   const wO = { u: 1.0, v: 0.3, w: 2.4, h: 2.5 };
   const westWall = placeWall(wall(7, GH, [wO], M.plaster), '+z', -3.5, -6.0, FL);
   frameOpening(westWall, wO, { mullions: 1 });
+  curtain(westWall, wO, 0.05); // sobra curta: o ripado da TV começa logo depois
 
   // Laje intermediária com beiral
-  box(root, 14.7, 0.35, 7.7, M.slab, 1.0, SLAB0 + 0.175, 0);
+  // laje em 4 partes deixando o vão da escada (VOID_X0..ST_X1 × ST_Z0..ST_Z1)
+  {
+    const sx0 = -6.35, sx1 = 8.35, sz0 = -3.85, sz1 = 3.85, y = SLAB0 + 0.175;
+    const part = (x0, x1, z0, z1) => box(root, x1 - x0, 0.35, z1 - z0, M.slab, (x0 + x1) / 2, y, (z0 + z1) / 2);
+    part(sx0, sx1, ST_Z1, sz1);
+    part(sx0, VOID_X0, sz0, ST_Z1);
+    part(ST_X1, sx1, sz0, ST_Z1);
+    part(VOID_X0, ST_X1, sz0, ST_Z0);
+  }
   box(root, 14.7, 0.02, 0.02, M.frame, 1.0, SLAB0 + 0.02, 3.86, { cast: false }); // friso de sombra
   // pilares da garagem
   for (const z of [3.55, -3.55]) box(root, 0.18, SLAB0, 0.18, M.frame, 8.15, SLAB0 / 2, z);
@@ -343,7 +464,8 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // ================================================================
   // Casa — pavimento superior (em balanço sobre a garagem)
   // ================================================================
-  box(root, 11.0, 0.01, 6.0, M.woodFloor, 2.5, UFL + 0.005, -0.5, { cast: false });
+  box(root, 11.0, 0.01, 2.5 - ST_Z1, M.woodFloor, 2.5, UFL + 0.005, (2.5 + ST_Z1) / 2, { cast: false });
+  box(root, 8.0 - ST_X1, 0.01, ST_Z1 + 3.5, M.woodFloor, (8.0 + ST_X1) / 2, UFL + 0.005, (ST_Z1 - 3.5) / 2, { cast: false });
   const ribbonO = { u: 1.0, v: 0.8, w: 6.5, h: 1.5 };
   const ufSouth = placeWall(wall(11, UH, [ribbonO], M.darkPlaster), '+x', -3.0, 2.5, UFL);
   frameOpening(ufSouth, ribbonO, { mullions: 3, glass: false });
@@ -363,12 +485,15 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   const bedO = { u: 1.2, v: 0.4, w: 0.9, h: 2.2 };
   const ufEast = placeWall(wall(6, UH, [bedO], M.darkPlaster), '-z', 2.5, 8.0, UFL);
   frameOpening(ufEast, bedO, { sill: false });
+  curtain(ufEast, bedO);
   const ufNO = { u: 3.0, v: 0.9, w: 2.0, h: 1.3 };
   const ufNorth = placeWall(wall(11, UH, [ufNO], M.darkPlaster), '-x', 8.0, -3.5, UFL);
   frameOpening(ufNorth, ufNO);
+  curtain(ufNorth, ufNO);
   const slideO = { u: 1.0, v: 0, w: 3.4, h: 2.6 };
   const ufWest = placeWall(wall(6, UH, [slideO], M.darkPlaster), '+z', -3.5, -3.0, UFL);
-  frameOpening(ufWest, slideO, { mullions: 1, sill: false });
+  frameOpening(ufWest, slideO, { sill: false, glass: false });
+  servoSlider(ufWest, slideO); // abre com V7, como as janelas
 
   // Brises verticais de madeira (profundidade real, projetam sombra)
   {
@@ -432,10 +557,15 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   box(root, 2.95, 0.03, 7.3, M.terraceDeck, -4.55, UFL + 0.015, 0, { cast: false });
   {
     const railH = 1.05;
+    // laterais vão até a face externa da parede oeste do andar de cima e retornam até ela:
+    // antes terminavam no ar (a parede só existe entre z = -3,5 e 2,5)
+    const xw = -3.0 - T / 2 - 0.01, x0 = -6.25, zs = 3.75, zn = -3.75;
     const rails = [
-      { x: -6.25, z: 0, w: 0.02, d: 7.5 },
-      { x: -4.65, z: 3.75, w: 3.2, d: 0.02 },
-      { x: -4.65, z: -3.75, w: 3.2, d: 0.02 },
+      { x: x0, z: 0, w: 0.02, d: zs - zn },
+      { x: (x0 + xw) / 2, z: zs, w: xw - x0, d: 0.02 },
+      { x: (x0 + xw) / 2, z: zn, w: xw - x0, d: 0.02 },
+      { x: xw, z: (zs + 2.5) / 2, w: 0.02, d: zs - 2.5 },
+      { x: xw, z: (zn - 3.5) / 2, w: 0.02, d: -3.5 - zn },
     ];
     for (const r of rails) {
       const g = new THREE.Mesh(new THREE.BoxGeometry(r.w, railH, r.d), M.railGlass);
@@ -444,12 +574,8 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
       box(root, Math.max(r.w, 0.05), 0.05, Math.max(r.d, 0.05), M.steel, r.x, UFL + railH, r.z);
     }
     // espreguiçadeiras
-    for (const z of [-1.2, 0.2]) {
-      box(root, 0.7, 0.3, 1.8, M.oak, -5.2, UFL + 0.15, z, { round: 0.04 });
-      const back = box(root, 0.66, 0.08, 0.7, M.fabric, -5.2, UFL + 0.55, z - 0.62, { round: 0.03 });
-      back.rotation.x = -0.9;
-      box(root, 0.66, 0.08, 1.2, M.fabric, -5.2, UFL + 0.34, z + 0.25, { round: 0.03 });
-    }
+    // lado a lado, voltadas para a piscina (+z), longe da porta de correr; encosto sobe na cabeceira
+    for (const x of [-5.45, -4.55]) lounger(root, x, UFL, 1.75);
   }
 
   // ================================================================
@@ -457,36 +583,59 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // ================================================================
   const interior = new THREE.Group(); root.add(interior);
   // Sala
-  box(interior, 3.2, 0.012, 2.4, M.rug, -3.4, FL + 0.012, 1.3, { cast: false });
   {
-    const sx = -2.1, sz = 1.2;
-    box(interior, 1.0, 0.42, 2.8, M.fabric, sx, FL + 0.21, sz, { round: 0.06 });
-    box(interior, 0.28, 0.5, 2.8, M.fabric, sx + 0.38, FL + 0.62, sz, { round: 0.08 });
-    box(interior, 0.95, 0.3, 0.22, M.fabric, sx, FL + 0.55, sz - 1.39, { round: 0.08 });
-    box(interior, 1.9, 0.42, 1.0, M.fabric, sx - 0.45, FL + 0.21, sz + 1.9, { round: 0.06 }); // chaise
-    box(interior, 1.9, 0.5, 0.28, M.fabric, sx - 0.45, FL + 0.62, sz + 2.28, { round: 0.08 });
-    for (let i = 0; i < 3; i++) box(interior, 0.2, 0.42, 0.75, M.fabric, sx + 0.18, FL + 0.66, sz - 0.9 + i * 0.85, { round: 0.1 });
-    box(interior, 0.14, 0.34, 0.42, M.fabricGreen, sx + 0.05, FL + 0.6, sz - 1.0, { round: 0.08 }).rotation.z = 0.2;
-    box(interior, 0.14, 0.34, 0.42, M.fabricRust, sx + 0.05, FL + 0.6, sz + 0.9, { round: 0.08 }).rotation.z = 0.2;
-    // mesa de centro
-    box(interior, 0.7, 0.05, 1.2, M.walnut, -3.4, FL + 0.38, 1.2, { round: 0.02 });
-    for (const [dx, dz] of [[-0.28, -0.52], [0.28, -0.52], [-0.28, 0.52], [0.28, 0.52]]) box(interior, 0.03, 0.36, 0.03, M.black, -3.4 + dx, FL + 0.18, 1.2 + dz);
-    box(interior, 0.25, 0.08, 0.18, M.ceramic, -3.35, FL + 0.44, 1.0, { round: 0.03 });
+    // sofá em L (seccional): assento principal voltado para a TV + chaise junto ao vidro (z = 3,43),
+    // mesmas alturas e almofadas nos dois lados para ler como uma peça só
+    const sx = -2.1;              // centro do assento principal (x)
+    const z0 = -0.3, zc = 2.1;    // início do assento principal · início da chaise
+    const zb = 3.1;               // face de trás do encosto da chaise (33 cm do vidro)
+    const xc = -3.5;              // ponta da chaise
+    const xb = sx + 0.5;          // face de trás do encosto principal
+    box(interior, 1.0, 0.42, zc - z0, M.fabric, sx, FL + 0.21, (z0 + zc) / 2, { round: 0.06 });
+    box(interior, xb - xc, 0.42, zb - zc, M.fabric, (xc + xb) / 2, FL + 0.21, (zc + zb) / 2, { round: 0.06 });
+    box(interior, 0.28, 0.5, zb - z0, M.fabric, xb - 0.14, FL + 0.62, (z0 + zb) / 2, { round: 0.08 });
+    box(interior, xb - 0.28 - xc, 0.5, 0.28, M.fabric, (xc + xb - 0.28) / 2, FL + 0.62, zb - 0.14, { round: 0.08 });
+    // braços do chão até 0,68 m (antes ficavam soltos acima do piso, fora do assento)
+    box(interior, 1.0, 0.68, 0.22, M.fabric, sx, FL + 0.34, z0 - 0.11, { round: 0.08 });
+    box(interior, 0.22, 0.68, zb - zc, M.fabric, xc - 0.11, FL + 0.34, (zc + zb) / 2, { round: 0.08 });
+    for (const z of [z0 + 0.4, z0 + 1.2, z0 + 2.0]) box(interior, 0.2, 0.42, 0.75, M.fabric, sx + 0.18, FL + 0.66, z, { round: 0.1 });
+    for (const x of [xc + 0.4, xc + 1.2]) box(interior, 0.75, 0.42, 0.2, M.fabric, x, FL + 0.66, zb - 0.38, { round: 0.1 });
+    box(interior, 0.14, 0.34, 0.42, M.fabricGreen, sx + 0.05, FL + 0.6, z0 + 0.5, { round: 0.08 }).rotation.z = 0.2;
+    box(interior, 0.42, 0.34, 0.14, M.fabricRust, xc + 0.5, FL + 0.6, zb - 0.5, { round: 0.08 }).rotation.x = -0.2;
+    // tapete alinhado ao L: começa no braço e entra 40 cm sob a frente da chaise e 60 cm sob o assento
+    const rx0 = -5.0, rx1 = sx - 0.5 + 0.6, rz0 = z0, rz1 = zc + 0.4;
+    const rx = (rx0 + rx1) / 2, rz = (rz0 + rz1) / 2;
+    box(interior, rx1 - rx0, 0.012, rz1 - rz0, M.rug, rx, FL + 0.012, rz, { cast: false });
+    // mesa de centro no meio do tapete
+    box(interior, 0.7, 0.05, 1.2, M.walnut, rx, FL + 0.38, rz, { round: 0.02 });
+    for (const [dx, dz] of [[-0.28, -0.52], [0.28, -0.52], [-0.28, 0.52], [0.28, 0.52]]) box(interior, 0.03, 0.36, 0.03, M.black, rx + dx, FL + 0.18, rz + dz);
+    box(interior, 0.25, 0.08, 0.18, M.ceramic, rx + 0.05, FL + 0.44, rz - 0.2, { round: 0.03 });
   }
   // parede de TV com ripado + TV exibindo dados reais
   {
     const ripGeo = new THREE.BoxGeometry(0.04, 2.9, 0.05);
-    const n = 30, inst = shadowed(new THREE.InstancedMesh(ripGeo, M.walnut, n));
+    const n = 26, inst = shadowed(new THREE.InstancedMesh(ripGeo, M.walnut, n)); // começa depois da janela oeste
     const m4 = new THREE.Matrix4();
-    for (let i = 0; i < n; i++) { m4.makeTranslation(-5.83, FL + 1.5, -0.3 + i * 0.1); inst.setMatrixAt(i, m4); }
+    for (let i = 0; i < n; i++) { m4.makeTranslation(-5.83, FL + 1.5, 0.05 + i * 0.1); inst.setMatrixAt(i, m4); }
     interior.add(inst);
     box(interior, 0.42, 0.42, 2.6, M.cabinet, -5.6, FL + 0.21, 1.15);
   }
+  // painel da casa no andar de cima (desenhado em drawRoom) e ventilador do quarto
+  const roomCanvas = document.createElement('canvas');
+  roomCanvas.width = 1024; roomCanvas.height = 640;
+  const roomTex = new THREE.CanvasTexture(roomCanvas);
+  roomTex.colorSpace = THREE.SRGBColorSpace;
+  roomTex.anisotropy = 8;
+  let fan = null;
   const tvCanvas = document.createElement('canvas');
-  tvCanvas.width = 1024; tvCanvas.height = 576;
+  // desenho em 1024×576 lógicos com escala 2× (2048×1152): texto nítido de perto e mipmaps limpos de longe
+  const TV_SCALE = 2;
+  tvCanvas.width = 1024 * TV_SCALE; tvCanvas.height = 576 * TV_SCALE;
   const tvTex = new THREE.CanvasTexture(tvCanvas);
   tvTex.colorSpace = THREE.SRGBColorSpace;
-  const tvMat = std({ color: 0x000000, emissive: 0xffffff, emissiveMap: tvTex, emissiveIntensity: 0.9, roughness: 0.2 });
+  tvTex.anisotropy = 8;
+  // tela fosca: reflexo forte do ambiente lavava o contraste do texto
+  const tvMat = std({ color: 0x000000, emissive: 0xffffff, emissiveMap: tvTex, emissiveIntensity: 0.9, roughness: 0.6, envMapIntensity: 0.25 });
   box(interior, 0.05, 1.0, 1.72, M.black, -5.74, FL + 1.45, 1.15);
   const tvScreen = new THREE.Mesh(new THREE.PlaneGeometry(1.66, 0.94), tvMat);
   tvScreen.position.set(-5.71, FL + 1.45, 1.15);
@@ -497,12 +646,18 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // luminária de arco
   {
     cyl(interior, 0.18, 0.2, 0.04, M.black, -1.2, FL + 0.02, 2.6);
-    const arc = new THREE.Mesh(new THREE.TorusGeometry(1.0, 0.018, 8, 40, Math.PI * 0.62), M.steel);
-    arc.position.set(-2.2, FL + 1.1, 2.6); arc.rotation.z = -0.05;
+    // arco nasce no topo da haste e a cúpula fica presa na ponta dele (antes ficava 0,5 m solta)
+    const ax = -2.2, ay = FL + 1.1, R = 1.0, a0 = -0.05, span = Math.PI * 0.7;
+    const arc = new THREE.Mesh(new THREE.TorusGeometry(R, 0.018, 8, 40, span), M.steel);
+    arc.position.set(ax, ay, 2.6); arc.rotation.z = a0;
     interior.add(arc);
-    const shade = new THREE.Mesh(new THREE.SphereGeometry(0.22, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.lampShade);
-    shade.position.set(-3.05, FL + 1.95, 2.6);
+    const tx = ax + R * Math.cos(a0 + span), ty = ay + R * Math.sin(a0 + span);
+    cyl(interior, 0.008, 0.008, 0.08, M.steel, tx, ty - 0.04, 2.6, 6);
+    const shade = new THREE.Mesh(new THREE.SphereGeometry(0.22, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.lampMetal);
+    shade.position.set(tx, ty - 0.08 - 0.22, 2.6);
     interior.add(shade);
+    sph(interior, 0.05, M.bulb, tx, ty - 0.08 - 0.16, 2.6);
+    lightPool(0xffc88a, tx, FL + 0.425, 2.5, 0.5, 0.45, 0.3); // facho no assento da chaise
     cyl(interior, 0.018, 0.018, 1.1, M.steel, -1.2, FL + 0.55, 2.6, 8);
   }
   // planta grande
@@ -536,9 +691,10 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     // pendente do jantar
     cyl(interior, 0.004, 0.004, 1.1, M.black, 0.0, SLAB0 - 0.55, -1.4, 6);
     const pend = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.32, 0.22, 32, 1, true), M.lampShade);
-    pend.material = M.lampShade;
     pend.position.set(0, SLAB0 - 1.15, -1.4);
     interior.add(pend);
+    sph(interior, 0.06, M.bulb, 0, SLAB0 - 1.18, -1.4);
+    lightPool(0xffc88a, 0, FL + 0.78, -1.4, 0.5, 0.75, 0.3); // facho no tampo da mesa
   }
 
   // Cozinha
@@ -558,35 +714,119 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     }
     for (const x of [3.1, 4.1]) {
       cyl(interior, 0.004, 0.004, 1.3, M.black, x, SLAB0 - 0.65, -1.0, 6);
-      const s = new THREE.Mesh(new THREE.SphereGeometry(0.13, 24, 16), M.lampShade);
-      s.position.set(x, SLAB0 - 1.35, -1.0);
+      const s = new THREE.Mesh(new THREE.SphereGeometry(0.15, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.lampMetal);
+      s.position.set(x, SLAB0 - 1.45, -1.0);
       interior.add(s);
+      sph(interior, 0.045, M.bulb, x, SLAB0 - 1.41, -1.0);
     }
     box(interior, 0.4, 0.3, 0.3, M.steel, 5.2, FL + 1.07, -3.1, { round: 0.03 }); // cafeteira
     plant(interior, 2.2, -3.1, 0.5, FL + 0.92);
   }
 
   // Fita de LED no forro (sanca)
-  for (const [w, d, x, z] of [[11.6, 0.03, 0, 3.28], [11.6, 0.03, 0, -3.28], [0.03, 6.5, -5.78, 0], [0.03, 6.5, 5.78, 0]]) {
+  for (const [w, d, x, z] of [[11.6, 0.03, 0, 3.28], [VOID_X0 + 5.8, 0.03, (VOID_X0 - 5.8) / 2, -3.28], [5.8 - ST_X1, 0.03, (5.8 + ST_X1) / 2, -3.28], [0.03, 6.5, -5.78, 0], [0.03, 6.5, 5.78, 0]]) {
     const s = new THREE.Mesh(new THREE.BoxGeometry(w, 0.02, d), M.ledStrip);
     s.position.set(x, SLAB0 - 0.03, z);
     interior.add(s);
   }
 
+  // Escada: degraus de carvalho presos na parede norte + corrimão de aço no lado livre
+  {
+    const zc = (ST_Z0 + ST_Z1) / 2, zr = ST_Z1 - 0.04;
+    for (let k = 1; k < ST_N; k++) box(interior, ST_G + 0.02, 0.05, ST_Z1 - ST_Z0, M.oak, ST_X0 + (k - 0.5) * ST_G, FL + k * ST_R - 0.025, zc, { round: 0.01 });
+    const at = (k) => [ST_X0 + (k - 0.5) * ST_G, FL + k * ST_R];
+    for (const k of [1, 6, 11, 16]) { const [x, y] = at(k); cyl(interior, 0.015, 0.015, 0.9, M.steel, x, y + 0.45, zr, 8); }
+    const [xa, ya] = at(1), [xb, yb] = at(16), dx = xb - xa, dy = yb - ya;
+    const rail = cyl(interior, 0.02, 0.02, Math.hypot(dx, dy), M.steel, (xa + xb) / 2, (ya + yb) / 2 + 0.9, zr, 8);
+    rail.rotation.z = -Math.atan2(dx, dy);
+    // guarda-corpo de vidro na borda do vão, no andar de cima
+    const gw = ST_X1 - VOID_X0;
+    const g = new THREE.Mesh(new THREE.BoxGeometry(gw, 1.0, 0.02), M.railGlass);
+    g.position.set((VOID_X0 + ST_X1) / 2, UFL + 0.5, ST_Z1 + 0.01);
+    interior.add(g);
+    box(interior, gw, 0.04, 0.05, M.steel, (VOID_X0 + ST_X1) / 2, UFL + 1.0, ST_Z1 + 0.01);
+  }
+
   // Interior — superior (quarto e escritório)
   {
-    box(interior, 1.9, 0.35, 2.1, M.oak, 5.6, UFL + 0.175, -2.2, { round: 0.03 });
-    box(interior, 1.8, 0.22, 2.0, M.whitePlastic, 5.6, UFL + 0.46, -2.2, { round: 0.08 });
-    box(interior, 1.85, 0.12, 1.3, M.fabricGreen, 5.6, UFL + 0.6, -1.8, { round: 0.05 });
-    box(interior, 2.2, 1.1, 0.08, M.walnut, 5.6, UFL + 0.75, -3.3);
-    for (const x of [4.3, 6.9]) {
-      box(interior, 0.45, 0.5, 0.4, M.walnut, x, UFL + 0.25, -3.1);
-      cyl(interior, 0.1, 0.12, 0.28, M.lampShade, x, UFL + 0.64, -3.1);
+    // quarto (leste): cama de casal com cabeceira estofada na parede norte, criados, tapete e banco
+    const bx = 6.4, bz0 = -3.5 + T / 2, bl = 2.0, bzc = bz0 + bl / 2;
+    box(interior, 2.6, 0.012, 2.3, M.rug, bx, UFL + 0.012, -1.75, { cast: false });
+    box(interior, 1.9, 1.0, 0.1, M.fabricGreen, bx, UFL + 0.75, bz0 + 0.05, { round: 0.04 });     // cabeceira
+    box(interior, 1.72, 0.28, bl - 0.1, M.walnut, bx, UFL + 0.14, bzc + 0.05, { round: 0.03 });    // estrado
+    box(interior, 1.62, 0.22, bl - 0.16, M.whitePlastic, bx, UFL + 0.39, bzc + 0.06, { round: 0.06 }); // colchão
+    box(interior, 1.66, 0.06, 1.35, M.fabric, bx, UFL + 0.52, bzc + 0.35, { round: 0.03 });         // edredom
+    box(interior, 1.66, 0.04, 0.42, M.fabricRust, bx, UFL + 0.56, bzc + 0.72, { round: 0.02 });     // manta nos pés
+    for (const dx of [-0.4, 0.4]) box(interior, 0.62, 0.14, 0.36, M.fabric, bx + dx, UFL + 0.57, bz0 + 0.38, { round: 0.06 }).rotation.x = -0.35; // travesseiros
+    box(interior, 1.2, 0.42, 0.36, M.oak, bx, UFL + 0.21, bzc + bl / 2 + 0.35, { round: 0.03 });    // banco nos pés
+    for (const x of [bx - 1.1, bx + 1.1]) {
+      box(interior, 0.45, 0.5, 0.4, M.walnut, x, UFL + 0.25, bz0 + 0.22, { round: 0.02 });
+      box(interior, 0.36, 0.012, 0.012, M.steel, x, UFL + 0.32, bz0 + 0.43);                     // puxador da gaveta
+      cyl(interior, 0.012, 0.012, 0.2, M.steel, x, UFL + 0.6, bz0 + 0.22, 6);
+      const ls = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.2, 24, 1, true), M.lampShade);
+      ls.position.set(x, UFL + 0.72, bz0 + 0.22);
+      interior.add(ls);
+      sph(interior, 0.04, M.bulb, x, UFL + 0.72, bz0 + 0.22);
     }
-    box(interior, 1.4, 0.04, 0.6, M.oak, -1.3, UFL + 0.74, -3.05);
-    box(interior, 0.6, 0.36, 0.03, M.black, -1.3, UFL + 1.0, -3.2);
+    // ventilador de teto: gira conforme a temperatura do DHT11 (V4), parado abaixo de 26 °C
+    cyl(interior, 0.012, 0.012, 0.32, M.steel, bx, ROOF0 - 0.16, bzc + 0.3, 8);
+    fan = new THREE.Group();
+    fan.userData.dynamic = true;
+    fan.position.set(bx, ROOF0 - 0.38, bzc + 0.3);
+    interior.add(fan);
+    fan.add(new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.1, 20), M.black));
+    for (let i = 0; i < 4; i++) {
+      const arm = new THREE.Group();
+      arm.rotation.y = (i * Math.PI) / 2;
+      fan.add(arm);
+      box(arm, 0.6, 0.012, 0.13, M.walnut, 0.4, -0.02, 0, { cast: false, round: 0.005 });
+    }
+
+    // armário (centro, parede norte): portas marcadas e puxadores
     box(interior, 2.2, 2.4, 0.6, M.cabinet, 1.8, UFL + 1.2, -3.05);
-    plant(interior, 0.2, 2.0, 0.8, UFL);
+    for (const x of [1.25, 1.8, 2.35]) box(interior, 0.008, 2.3, 0.01, M.black, x, UFL + 1.2, -2.745, { cast: false });
+    for (const x of [1.71, 1.89]) box(interior, 0.02, 0.4, 0.03, M.steel, x, UFL + 1.2, -2.73);
+
+    // escritório (oeste): estante na parede norte, mesa sob a janela em fita, cadeira
+    {
+      // estante na parede oeste, entre a porta de correr e o canto sul (a parede norte fica livre p/ a chegada da escada)
+      const ez = 1.6, ew = 1.2, eh = 1.9, ex = -3.0 + T / 2 + 0.16;
+      for (const dz of [-ew / 2, ew / 2]) box(interior, 0.32, eh, 0.03, M.walnut, ex, UFL + eh / 2, ez + dz);
+      const shelves = [0.02, 0.48, 0.94, 1.4, eh - 0.015];
+      for (const y of shelves) box(interior, 0.32, 0.03, ew, M.walnut, ex, UFL + y, ez);
+      const bookMats = [M.fabricGreen, M.fabricRust, M.whitePlastic, M.black, M.oak];
+      let n = 0;
+      for (let r = 0; r < 4; r++) {
+        let z = ez - ew / 2 + 0.06;
+        while (z < ez + ew / 2 - 0.12) {
+          const w = 0.03 + ((n * 7) % 5) * 0.008, h = 0.24 + ((n * 11) % 7) * 0.025;
+          if ((n * 13) % 9 !== 0) box(interior, 0.22, h, w, bookMats[n % bookMats.length], ex + 0.02, UFL + shelves[r] + 0.015 + h / 2, z + w / 2, { cast: false });
+          z += w + 0.006; n++;
+        }
+      }
+    }
+    {
+      const dx = -0.6, dz = 2.5 - T / 2 - 0.35;
+      box(interior, 1.4, 0.04, 0.65, M.oak, dx, UFL + 0.74, dz, { round: 0.01 });
+      for (const [lx, lz] of [[-0.66, -0.28], [0.66, -0.28], [-0.66, 0.28], [0.66, 0.28]]) box(interior, 0.035, 0.72, 0.035, M.black, dx + lx, UFL + 0.36, dz + lz);
+      box(interior, 0.62, 0.37, 0.03, M.black, dx, UFL + 1.08, dz + 0.18);                      // monitor
+      box(interior, 0.05, 0.16, 0.05, M.black, dx, UFL + 0.84, dz + 0.2);
+      box(interior, 0.42, 0.02, 0.14, M.whitePlastic, dx, UFL + 0.77, dz - 0.12);                // teclado
+      // cadeira giratória
+      const cz = dz - 0.62;
+      cyl(interior, 0.26, 0.26, 0.03, M.black, dx, UFL + 0.03, cz, 20);
+      cyl(interior, 0.025, 0.025, 0.42, M.steel, dx, UFL + 0.24, cz, 8);
+      box(interior, 0.48, 0.07, 0.46, M.black, dx, UFL + 0.48, cz, { round: 0.03 });
+      box(interior, 0.46, 0.52, 0.06, M.black, dx, UFL + 0.82, cz - 0.24, { round: 0.03 });
+    }
+    plant(interior, 3.5, 1.9, 0.8, UFL);
+
+    // painel da casa na parede norte (entre estante e armário): mesmos dados do painel/TV
+    const pm = std({ color: 0x000000, emissive: 0xffffff, emissiveMap: roomTex, emissiveIntensity: 0.9, roughness: 0.6, envMapIntensity: 0.25 });
+    box(interior, 0.48, 0.32, 0.02, M.black, 0.25, UFL + 1.45, -3.5 + T / 2 + 0.01);
+    const pn = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 0.28), pm);
+    pn.position.set(0.25, UFL + 1.45, -3.5 + T / 2 + 0.022);
+    interior.add(pn);
   }
 
   // ================================================================
@@ -604,33 +844,68 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     }
     root.add(inst);
   }
-  // piscina
+  // deck da sala: conjunto de estar baixo na ponta oeste e vasos nas pontas — o centro fica livre
+  // para a vista da sala (nada passa de ~0,8 m de altura)
   {
-    const px = -3.6, pz = 8.9, pw = 6.0, pd = 3.0;
-    box(root, pw, 0.02, pd, M.tile, px, 0.015, pz, { cast: false });
-    box(root, pw, 0.14, 0.05, M.tile, px, 0.07, pz - pd / 2 + 0.025);
-    box(root, pw, 0.14, 0.05, M.tile, px, 0.07, pz + pd / 2 - 0.025);
-    box(root, 0.05, 0.14, pd, M.tile, px - pw / 2 + 0.025, 0.07, pz);
-    box(root, 0.05, 0.14, pd, M.tile, px + pw / 2 - 0.025, 0.07, pz);
-    box(root, pw + 0.7, 0.07, 0.35, M.stone, px, 0.16, pz - pd / 2 - 0.175);
-    box(root, pw + 0.7, 0.07, 0.35, M.stone, px, 0.16, pz + pd / 2 + 0.175);
-    box(root, 0.35, 0.07, pd, M.stone, px - pw / 2 - 0.175, 0.16, pz);
-    box(root, 0.35, 0.07, pd, M.stone, px + pw / 2 + 0.175, 0.16, pz);
-    const water = new THREE.Mesh(new THREE.PlaneGeometry(pw, pd), M.water);
+    const y = 0.12, cz = 5.35;
+    box(root, 2.5, 0.01, 2.0, M.rug, -4.9, y + 0.005, cz + 0.25, { cast: false });
+    for (const x of [-5.55, -4.25]) {
+      box(root, 0.78, 0.26, 0.78, M.oak, x, y + 0.13, cz, { round: 0.03 });                       // base
+      box(root, 0.7, 0.12, 0.68, M.fabric, x, y + 0.32, cz + 0.03, { round: 0.04 });              // assento
+      box(root, 0.7, 0.36, 0.14, M.fabric, x, y + 0.52, cz - 0.31, { round: 0.05 }).rotation.x = -0.18; // encosto
+      for (const dx of [-0.36, 0.36]) box(root, 0.07, 0.2, 0.78, M.oak, x + dx, y + 0.36, cz, { round: 0.02 }); // braços
+    }
+    cyl(root, 0.32, 0.32, 0.04, M.walnut, -4.9, y + 0.36, cz + 0.85, 28);                        // mesinha
+    cyl(root, 0.04, 0.06, 0.34, M.black, -4.9, y + 0.17, cz + 0.85, 10);
+    cyl(root, 0.18, 0.18, 0.02, M.black, -4.9, y + 0.01, cz + 0.85, 20);
+    plant(root, -6.25, 6.45, 0.7, y);
+    plant(root, 1.4, 6.45, 0.7, y);
+  }
+  // piscina: poço de 1,3 m no furo do terreno, azulejo em metros, água mais transparente
+  {
+    const { x: px, z: pz, w: pw, d: pd, depth } = POOL;
+    const top = 0.14, yF = 0.1 - depth, wallH = top - yF, wt = 0.05;
+    const tileMap = M.tile.map.clone(); tileMap.repeat.set(1, 1); tileMap.needsUpdate = true;
+    const wallMat = std({ map: tileMap, roughness: 0.25, color: 0xcfe7ec });
+    const floorMat = std({ map: tileMap, roughness: 0.3, color: 0x8db9c4 }); // fundo mais escuro: lê como profundo
+    tiledBox(root, pw, 0.04, pd, floorMat, px, yF - 0.02, pz);
+    tiledBox(root, pw, wallH, wt, wallMat, px, yF + wallH / 2, pz - pd / 2 + wt / 2);
+    tiledBox(root, pw, wallH, wt, wallMat, px, yF + wallH / 2, pz + pd / 2 - wt / 2);
+    tiledBox(root, wt, wallH, pd - wt * 2, wallMat, px - pw / 2 + wt / 2, yF + wallH / 2, pz);
+    tiledBox(root, wt, wallH, pd - wt * 2, wallMat, px + pw / 2 - wt / 2, yF + wallH / 2, pz);
+    // borda de pedra maciça do chão (y 0) até 0,195: fecha a lateral externa da parede de azulejo,
+    // que antes aparecia entre a grama e a borda; avança 4 cm sobre a água (pingadeira)
+    const bh = 0.195, bw = 0.35, ov = 0.04, bwo = bw + ov;
+    box(root, pw + bw * 2, bh, bwo, M.stone, px, bh / 2, pz - pd / 2 - bw / 2 + ov / 2);
+    box(root, pw + bw * 2, bh, bwo, M.stone, px, bh / 2, pz + pd / 2 + bw / 2 - ov / 2);
+    box(root, bwo, bh, pd - ov * 2, M.stone, px - pw / 2 - bw / 2 + ov / 2, bh / 2, pz);
+    box(root, bwo, bh, pd - ov * 2, M.stone, px + pw / 2 + bw / 2 - ov / 2, bh / 2, pz);
+    const water = new THREE.Mesh(new THREE.PlaneGeometry(pw - wt * 2, pd - wt * 2), M.water);
     water.rotation.x = -Math.PI / 2;
-    water.position.set(px, 0.12, pz);
+    water.position.set(px, 0.1, pz);
     water.receiveShadow = true;
     root.add(water);
+    // luminária na parede, meio metro abaixo da água, e o brilho dela no fundo
     const pl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.06, 0.02), M.poolLight);
-    pl.position.set(px, 0.07, pz - pd / 2 + 0.06);
+    pl.position.set(px, -0.45, pz - pd / 2 + wt + 0.011);
     root.add(pl);
-    // espreguiçadeiras da piscina
-    for (const x of [-5.4, -4.0]) {
-      box(root, 0.7, 0.3, 1.8, M.oak, x, 0.15, 11.2, { round: 0.04 });
-      box(root, 0.66, 0.08, 1.2, M.fabric, x, 0.34, 11.45, { round: 0.03 });
-      const b = box(root, 0.66, 0.08, 0.7, M.fabric, x, 0.52, 10.6, { round: 0.03 });
-      b.rotation.x = 0.9;
+    lightPool(0x46dcff, px, yF + 0.012, pz, pw * 0.5, pd * 0.55, 0.45);
+    // escada de aço na ponta leste: dá a escala da profundidade
+    {
+      const lx = px + pw / 2 - wt - 0.1, ox = px + pw / 2 + 0.25;
+      for (const dz of [-0.25, 0.25]) {
+        const z = pz + dz;
+        cyl(root, 0.02, 0.02, 1.75, M.steel, lx, -0.025, z, 10);                      // desce na água
+        const h = cyl(root, 0.02, 0.02, ox - lx, M.steel, (lx + ox) / 2, 0.85, z, 10); // passa sobre a borda
+        h.rotation.z = Math.PI / 2;
+        cyl(root, 0.02, 0.02, 0.66, M.steel, ox, 0.52, z, 10);                          // fixa na pedra
+      }
+      for (const y of [-0.75, -0.45, -0.15]) box(root, 0.08, 0.025, 0.5, M.steel, lx - 0.02, y, pz);
     }
+    // espreguiçadeiras no gramado a oeste da piscina, pés voltados para a água, 40 cm da borda de pedra
+    // (ao sul não cabem: entre a borda e o fim do terreno sobram só 1,25 m)
+    const lx = POOL.x - POOL.w / 2 - 0.35 - 0.4 - 0.9;
+    for (const dz of [-0.55, 0.55]) lounger(root, lx, 0, POOL.z + dz, Math.PI / 2);
   }
   // caminho de pedras até a porta + calçada da garagem
   for (let i = 0; i < 9; i++) box(root, 1.5, 0.06, 0.55, M.stone, 3.0, 0.03, 4.4 + i * 0.85, { round: 0.02 });
@@ -799,7 +1074,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const spots = [];
     for (let x = -14; x <= 14; x += 0.9) spots.push([x, -10.9, 0.62 + Math.sin(x * 1.3) * 0.12]);
     for (let z = -9; z <= 7; z += 0.95) spots.push([-14.8, z, 0.6 + Math.cos(z) * 0.1]);
-    for (const [x, z] of [[-6.9, 4.4], [-7.1, 6.8], [5.85, 4.3], [1.0, 4.4], [9.4, 3.6], [9.6, -1.2], [9.5, -3.4], [-7.2, -2.0], [-7.0, 0.5]]) spots.push([x, z, 0.5 + Math.abs((x * z) % 0.25)]);
+    for (const [x, z] of [[-7.3, 4.4], [-7.3, 6.8], [5.85, 4.3], [1.1, 7.75], [9.4, 3.6], [9.6, -1.2], [9.5, -3.4], [-7.2, -2.0], [-7.0, 0.5]]) spots.push([x, z, 0.5 + Math.abs((x * z) % 0.25)]);
     const blobs = spots.map(([x, z, s]) => [x, s * 0.75, z, s]);
     foliage(root, blobs, hi ? 22 : 14, 0.7, 1);
   }
@@ -808,7 +1083,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const geo = new THREE.IcosahedronGeometry(0.032, 1);
     const cols = [0xf2c14e, 0xe86a7a, 0xffffff, 0xb07fd1, 0xf29d52];
     const pts = [];
-    const beds = [[4.4, 6.0, 3.95, 4.7], [-7.4, -6.6, 3.8, 7.2], [0.2, 1.7, 4.0, 4.7]];
+    const beds = [[4.4, 6.0, 3.95, 4.7], [-7.7, -6.85, 3.8, 7.2], [0.5, 1.7, 7.3, 7.95]]; // fora do deck (x -6,6..1,8 · z 3,9..6,8)
     let seed = 1;
     const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
     for (const [x0, x1, z0, z1] of beds) for (let i = 0; i < 160; i++) pts.push([x0 + r() * (x1 - x0), z0 + r() * (z1 - z0), r()]);
@@ -828,7 +1103,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const nrm = geo.attributes.normal;
     for (let i = 0; i < nrm.count; i++) nrm.setXYZ(i, 0, 1, 0); // sombreia como o gramado
     const grassMat = new THREE.MeshStandardMaterial(cutout({ map: TX.grassBlades(), side: THREE.DoubleSide, roughness: 0.95 }, 0.5));
-    const blocked = [[-6.8, 8.9, -4.2, 4.2], [-7.1, 2.0, 3.8, 6.9], [-7.0, -0.1, 7.1, 12], [2.1, 3.9, 3.8, 12], [6.1, 8.8, -4, 12]];
+    const blocked = [[-9.4, -7.1, 7.7, 10.1], [-6.8, 8.9, -4.2, 4.2], [-7.1, 2.0, 3.8, 6.9], [-7.0, -0.1, 7.1, 12], [2.1, 3.9, 3.8, 12], [6.1, 8.8, -4, 12]];
     const ok = (x, z) => !blocked.some(([a, b, c, d]) => x > a && x < b && z > c && z < d);
     const pts = [];
     let seed = 7;
@@ -918,8 +1193,8 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   const SONAR_Z = 0.95;                    // face do sensor (fundo da vaga)
   const parkMats = [0x36e39a, 0xffb020, 0xff3b55].map((c) => std({ color: 0x222222, emissive: c, emissiveIntensity: 0 }));
   const sonarMat = new THREE.MeshBasicMaterial({ color: 0x5ee7ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
-  let sonarBeam;
-  {
+  let sonarBeam = null;
+  if (sensores.garagem) {
     const g = new THREE.Group();
     g.position.set(7.1, 0, SONAR_Z - 0.06);
     root.add(g);
@@ -953,7 +1228,7 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   }
 
   // LDR (A0 → V6/V10) na cobertura: decide se é dia ou noite para a luz automática
-  {
+  if (sensores.ldr) {
     const g = new THREE.Group();
     g.position.set(7.4, ROOF0 + 0.3, 2.3);
     root.add(g);
@@ -1048,14 +1323,13 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   // ================================================================
   // Luzes internas/externas (ligadas ao V0)
   // ================================================================
-  addPoint(0xffb86b, 34, 10, -3.0, 2.9, 1.3);        // sala
-  addPoint(0xffc98a, 26, 9, 2.6, 2.8, -1.2);          // jantar/cozinha
+  addPoint(0xffb86b, 22, 10, -3.0, 2.9, 1.3);        // sala (34 deixava mancha no teto)
+  addPoint(0xffc98a, 18, 9, 2.6, 2.8, -1.2);          // jantar/cozinha
   addPoint(0xffb86b, 26, 8, 2.0, UFL + 2.5, -0.8);    // superior (quarto/escritório)
   // área externa: só a qualidade alta usa luzes reais; as outras usam poças de luz (mesmo visual, custo ~zero)
   const eaves = [[-4.8, 3.72, -4.8, 5.2, 0.12], [-0.4, 3.72, -0.4, 5.2, 0.12], [3.0, 3.72, 3.0, 4.9, 0.09], [7.2, 3.72, 7.2, 2.2, 0.09]];
   if (hi) {
     addPoint(0xffc27a, 10, 7, 3.0, 0.9, 7.6);         // caminho
-    addPoint(0x46dcff, 10, 6, -3.6, 0.35, 8.9);       // piscina
     for (const [x, z, tx, tz] of eaves) {
       const sp = new THREE.SpotLight(0xffc88a, 0, 9, 0.62, 0.85, 2);
       sp.position.set(x, SLAB0 - 0.02, z);
@@ -1066,7 +1340,6 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
   } else {
     for (const [, , tx, tz, y] of eaves) lightPool(0xffc88a, tx, y + 0.01, tz, 1.9, 1.9, 0.5);
     lightPool(0xffc27a, 3.0, 0.08, 7.6, 2.4, 3.2, 0.32);    // caminho
-    lightPool(0x46dcff, -3.6, 0.13, 8.9, 3.4, 1.9, 0.35);   // piscina
   }
 
   // ================================================================
@@ -1083,30 +1356,81 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     night: 0,
   };
 
-  function drawTV(v = {}, meta = {}) {
-    const g = tvCanvas.getContext('2d'), W = tvCanvas.width, H = tvCanvas.height;
+  // TV da sala: mesmos valores do painel (fmt) + hora da última leitura.
+  // Só redesenha quando algum texto muda ou o minuto do relógio vira (o canvas vai inteiro para a GPU).
+  let tvV = {}, tvMeta = {}, tvSig = '', tvMinute = -1;
+  function drawTV(v = tvV, meta = tvMeta, force = false) {
+    tvV = v; tvMeta = meta;
+    const now = new Date();
+    tvMinute = Math.floor(now.getTime() / 60000);
+    let status = 'CASA · DEMONSTRAÇÃO', warn = false;
+    if (meta.mode === 'live') {
+      if (!meta.blynkOnline) { status = 'CASA · BLYNK OFFLINE'; warn = true; }
+      else if (!meta.deviceOnline) { status = 'CASA · NODEMCU OFFLINE'; warn = true; }
+      else status = 'CASA · AO VIVO';
+    }
+    const clock = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const temp = fmt.temp(v.V4);
+    const cards = [['UMIDADE', `${fmt.umid(v.V5)}%`], ['PRESENÇA', fmt.pres(v.V11)], ['JANELA', fmt.janela(v.V7)]];
+    const read = `última leitura ${fmt.hora(meta.readAt)}`;
+    const sig = JSON.stringify([status, clock, temp, cards, read]);
+    if (sig === tvSig && !force) return;
+    tvSig = sig;
+
+    // poucos textos e grandes: na vista Sala a TV ocupa ~250 px na tela, letra pequena vira borrão
+    const g = tvCanvas.getContext('2d'), W = 1024, H = 576;
+    g.setTransform(TV_SCALE, 0, 0, TV_SCALE, 0, 0);
     const grd = g.createLinearGradient(0, 0, W, H);
     grd.addColorStop(0, '#0b1422'); grd.addColorStop(1, '#13233a');
     g.fillStyle = grd; g.fillRect(0, 0, W, H);
-    g.fillStyle = '#5ee7ff'; g.font = '600 30px "JetBrains Mono", monospace';
-    g.fillText(meta.live ? 'CASA · AO VIVO' : 'CASA · DEMONSTRAÇÃO', 56, 76);
-    g.fillStyle = '#8aa3bf'; g.font = '400 26px "DM Sans", sans-serif';
-    const d = new Date();
-    g.fillText(d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }), W - 150, 76);
-    g.fillStyle = '#ffffff'; g.font = '700 170px "Unbounded", sans-serif';
-    g.fillText(`${v.V4 ? Number(v.V4).toFixed(1) : '--'}°`, 50, 300);
-    g.fillStyle = '#8aa3bf'; g.font = '500 30px "DM Sans", sans-serif';
-    g.fillText('temperatura interna · DHT11', 58, 350);
-    const cards = [['UMIDADE', `${v.V5 ?? '--'}%`], ['LUZ', `${v.V10 ?? '--'}%`], ['JANELA', v.V7 ?? '--']];
+    // cabeçalho: status + relógio
+    g.fillStyle = warn ? '#ffb547' : '#5ee7ff'; g.font = '700 40px "DM Sans", sans-serif';
+    g.fillText(status, 48, 72);
+    g.fillStyle = '#c3d3e6'; g.textAlign = 'right'; g.fillText(clock, W - 48, 72); g.textAlign = 'left';
+    // temperatura grande à esquerda
+    g.fillStyle = '#ffffff'; g.font = '700 168px "Unbounded", sans-serif';
+    g.fillText(`${temp}°`, 40, 300);
+    g.fillStyle = '#9fb4cc'; g.font = '500 36px "DM Sans", sans-serif';
+    g.fillText('Temperatura · DHT11', 48, 356);
+    // umidade / presença / janela em linhas largas embaixo
     cards.forEach(([k, val], i) => {
-      const x = 56 + i * 316;
-      g.fillStyle = 'rgba(255,255,255,0.06)'; g.fillRect(x, 400, 290, 120);
-      g.fillStyle = '#8aa3bf'; g.font = '600 22px "JetBrains Mono", monospace'; g.fillText(k, x + 22, 444);
-      g.fillStyle = '#ffffff'; g.font = '700 40px "DM Sans", sans-serif'; g.fillText(val, x + 22, 496);
+      const x = 40 + i * 320, w = 304;
+      g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(x, 392, w, 136);
+      g.fillStyle = '#9fb4cc'; g.font = '700 30px "DM Sans", sans-serif'; g.fillText(k, x + 20, 434);
+      g.fillStyle = '#ffffff'; g.font = '700 54px "DM Sans", sans-serif'; g.fillText(val, x + 20, 500, w - 40);
     });
+    g.fillStyle = '#7f96b1'; g.font = '500 26px "DM Sans", sans-serif';
+    g.textAlign = 'right'; g.fillText(read, W - 48, 356); g.textAlign = 'left';
     tvTex.needsUpdate = true;
   }
   drawTV();
+  // o primeiro desenho pode sair antes das fontes carregarem: redesenha quando estiverem prontas
+  if (document.fonts) {
+    Promise.all(['500 36px "DM Sans"', '700 40px "DM Sans"', '700 168px "Unbounded"']
+      .map((f) => document.fonts.load(f))).then(() => { drawTV(tvV, tvMeta, true); drawRoom(tvV, true); }, () => {});
+  }
+
+  // painel da casa (andar de cima): temperatura grande + umidade, janela e alarme
+  let roomSig = '';
+  function drawRoom(v = tvV, force = false) {
+    const temp = fmt.temp(v.V4);
+    const rows = [['UMIDADE', `${fmt.umid(v.V5)}%`], ['JANELA', fmt.janela(v.V7)], ['ALARME', fmt.alarme(v.V8, v.V9)]];
+    const sig = JSON.stringify([temp, rows]);
+    if (sig === roomSig && !force) return;
+    roomSig = sig;
+    const g = roomCanvas.getContext('2d'), W = roomCanvas.width, H = roomCanvas.height;
+    g.fillStyle = '#0d1828'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#5ee7ff'; g.font = '700 48px "DM Sans", sans-serif'; g.fillText('CASA', 56, 90);
+    g.fillStyle = '#ffffff'; g.font = '700 190px "Unbounded", sans-serif'; g.fillText(`${temp}°`, 44, 330);
+    rows.forEach(([k, val], i) => {
+      const y = 430 + i * 72;
+      g.fillStyle = '#9fb4cc'; g.font = '700 40px "DM Sans", sans-serif'; g.fillText(k, 56, y);
+      g.fillStyle = val === 'Disparado' ? '#ff5468' : '#ffffff'; g.font = '700 52px "DM Sans", sans-serif';
+      g.textAlign = 'right'; g.fillText(val, W - 56, y); g.textAlign = 'left';
+    });
+    roomTex.needsUpdate = true;
+  }
+  drawRoom({});
 
   function setState(v, meta) {
     S.lightT = v.V0 === '1' ? 1 : 0;
@@ -1122,10 +1446,13 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     lockLedMat.color.set(S.doorT ? 0x36e39a : 0xff3b55);
     lockLedMat.emissive.set(S.doorT ? 0x36e39a : 0xff3b55);
     drawTV(v, meta);
+    drawRoom(v);
+    S.temp = Number(v.V4);
   }
   // cm medidos pelo HC-SR04 → metros entre o sensor e o para-choque na cena.
   // Na maquete o carrinho trabalha entre ~5 e 100 cm; acima disso a vaga está livre.
   function distToGap(cm) {
+    if (!sensores.garagem) return 0.6;   // sem HC-SR04: carro estacionado no fundo da vaga
     if (!Number.isFinite(cm)) return 6;
     const k = THREE.MathUtils.clamp((cm - 4) / 96, 0, 1);
     return 0.12 + k * 5.9;
@@ -1140,9 +1467,11 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const nightBoost = 0.35 + S.night * 0.65;
     for (const p of pointLights) p.light.intensity = p.base * S.light * nightBoost;
     // lâmpadas/fitas: brilho contido à noite (antes chegava a 6,9 e o bloom "estourava")
-    for (const m of lightMats) m.emissiveIntensity = S.light * (1.2 + S.night * 2.2);
+    for (const [m, day, night] of lightMats) m.emissiveIntensity = S.light * (day + S.night * (night - day));
     for (const lp of lightPools) lp.mat.opacity = lp.base * S.light * (0.15 + S.night * 0.85);
-    M.poolLight.emissiveIntensity = S.light * (1 + S.night * 1.8);
+    M.poolLight.emissiveIntensity = S.light * (0.3 + S.night * 0.3); // antes 2,8: virava uma estrela na água
+    // relógio da TV: redesenha ao virar o minuto, mesmo sem estado novo
+    if (Math.floor(Date.now() / 60000) !== tvMinute) drawTV();
 
     // sombras só são recalculadas quando algo que projeta sombra se move (ver main.js)
     S.moving = Math.abs(S.door - S.doorT) > 1e-3 || Math.abs(S.win - S.winT) > 1e-3 || Math.abs(S.gap - S.gapT) > 1e-3;
@@ -1153,10 +1482,16 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
 
     // janela do servo (V7) — velocidade de servo SG90
     S.win = damp(S.win, S.winT, 3.8, dt);
+    // ventilador do quarto: começa a girar em 26 °C e chega ao máximo em 30 °C (mesma faixa da janela automática)
+    const fanT = S.temp >= 26 ? THREE.MathUtils.clamp((S.temp - 26) / 4, 0.3, 1) * 9 : 0;
+    S.fan = damp(S.fan || 0, fanT, 1.2, dt);
+    if (fan) fan.rotation.y += S.fan * dt;
     for (const sh of servoSashes) {
       if (sh.kind === 'casement') sh.hinge.rotation.y = -S.win * THREE.MathUtils.degToRad(82);
+      else if (sh.kind === 'slide') sh.hinge.position.x = sh.x0 - S.win * sh.dist;
       else sh.hinge.rotation.x = -S.win * THREE.MathUtils.degToRad(38);
     }
+    for (const c of curtains) c.scale.x = 1 - S.win * 0.8;
 
     // alarme
     S.alarm = damp(S.alarm, S.alarmT, 8, dt);
@@ -1198,8 +1533,10 @@ export function buildWorld(scene, { quality = 'high' } = {}) {
     const zone = !Number.isFinite(S.dist) ? -1 : S.dist <= 10 ? 2 : S.dist <= 30 ? 1 : S.dist <= 80 ? 0 : -1;
     const blink = zone === 2 ? (Math.sin(t * 18) > 0 ? 1 : 0.15) : 1;
     parkMats.forEach((m, i) => (m.emissiveIntensity = i === zone ? 2.2 * blink : 0.05));
-    sonarBeam.scale.set(1, Math.max(0.1, S.gap), 1);
-    sonarBeam.position.set(0, 0.7, 0.15 + S.gap / 2);
+    if (sonarBeam) {
+      sonarBeam.scale.set(1, Math.max(0.1, S.gap), 1);
+      sonarBeam.position.set(0, 0.7, 0.15 + S.gap / 2);
+    }
     sonarMat.opacity = S.online && zone >= 0 ? 0.05 + 0.04 * Math.sin(t * 12) : 0.012;
 
     // NodeMCU: pulsação enquanto conectado

@@ -11,6 +11,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { buildWorld } from './world.js';
 import { createAtmosphere } from './atmosphere.js';
 import { createUI } from './ui.js';
+import { SENSORES } from './config.js';
 
 // ---------- qualidade ----------
 // Três perfis. O "auto" escolhe pela placa de vídeo e ainda rebaixa sozinho se o FPS cair.
@@ -329,7 +330,7 @@ async function init() {
   applyTier(tier);
   await step('Gerando texturas e modelando a casa…');
   const t0 = performance.now();
-  world = buildWorld(scene, { quality: buildTier });
+  world = buildWorld(scene, { quality: buildTier, sensores: SENSORES });
   atmo = createAtmosphere(scene, { sun, hemi, renderer, bloomPass: bloom, hi: buildTier === 'high' });
   if (fixedNight !== null) atmo.setNight(Number(fixedNight));
 
@@ -352,6 +353,7 @@ async function init() {
     onState(values, meta, changed) {
       world.setState(values, meta);
       if (changed) world.pulse();
+      if (!SENSORES.ldr) return; // sem LDR o céu segue o relógio ou a hora manual
       const pct = Number(values.V10);
       let dayness;
       if (Number.isFinite(pct)) dayness = THREE.MathUtils.smoothstep(pct, 12, 68);

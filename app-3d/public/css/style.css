@@ -1,3 +1,6 @@
+/* atributo hidden sempre vence o display das classes (sensores desligados, simulação) */
+[hidden] { display: none !important; }
+
 :root {
   --ink: #eaf1f8;
   --muted: #93a4b8;
