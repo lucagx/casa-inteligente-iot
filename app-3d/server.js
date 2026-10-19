@@ -72,8 +72,12 @@ if (process.env.RENDER && !SENHA) {
 }
 // /healthz fica aberto (sem dados) para o health check do Render e monitores
 app.get("/healthz", (req, res) => res.type("text").send("ok"));
+// casca do app do celular (PWA) também fica aberta: o navegador busca manifest, service worker e ícones
+// sem credenciais. Não tem dados nem controla nada — a página /painel/ e a /api continuam com senha.
+const PWA_ABERTO = /^\/painel\/(manifest\.webmanifest|sw\.js|icones\/\w[\w.-]*)$/;
 if (SENHA) {
   app.use((req, res, next) => {
+    if (PWA_ABERTO.test(req.path)) return next();
     const [tipo, valor] = (req.headers.authorization || "").split(" ");
     if (tipo === "Basic" && valor) {
       const txt = Buffer.from(valor, "base64").toString();

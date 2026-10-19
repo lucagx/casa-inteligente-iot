@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#070b12">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Casa">
+  <title>Casa Inteligente · Painel</title>
+  <link rel="manifest" href="/painel/manifest.webmanifest">
+  <link rel="icon" href="/painel/icones/icone.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/painel/icones/icone-180.png">
+  <link rel="stylesheet" href="/vendor/fonts/unbounded/700.css">
+  <link rel="stylesheet" href="/vendor/fonts/dm-sans/400.css">
+  <link rel="stylesheet" href="/vendor/fonts/dm-sans/500.css">
+  <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/400.css">
+  <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/600.css">
+  <link rel="stylesheet" href="/painel/painel.css">
+</head>
+<body>
+  <div class="vignette" aria-hidden="true"></div>
+  <div class="wrap">
+    <header class="top">
+      <div>
+        <p class="eyebrow">FEPI · IoT + IoB</p>
+        <h1>Casa<br>Inteligente</h1>
+      </div>
+      <div class="acts">
+        <button type="button" class="ibtn" id="install" hidden>Instalar</button>
+        <a class="ibtn" href="/" title="Abrir a casa 3D">Casa 3D</a>
+      </div>
+    </header>
+
+    <div class="chips">
+      <div class="chip" id="chipLink"><i></i><span>Conectando…</span></div>
+      <div class="chip" id="chipDev"><i></i><span>NodeMCU</span></div>
+      <div class="chip quiet" id="chipAge"><span>aguardando dados</span></div>
+    </div>
+
+    <section>
+      <h2>Ambiente</h2>
+      <div class="sensors" id="sensors"></div>
+    </section>
+
+    <section>
+      <h2>Modo</h2>
+      <div class="seg" role="group" aria-label="Modo de operação">
+        <button type="button" id="modeAuto">Automático</button>
+        <button type="button" id="modeManual">Manual</button>
+      </div>
+      <p class="hint" id="modeHint"></p>
+    </section>
+
+    <section>
+      <h2>Controles</h2>
+      <div class="devices" id="devices"></div>
+    </section>
+
+    <div class="err" id="errBox" hidden></div>
+
+    <footer class="foot">NodeMCU ESP8266 · Blynk · <a href="/">abrir a casa 3D</a></footer>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+
+  <script type="module" src="/painel/painel.js"></script>
+</body>
+</html>

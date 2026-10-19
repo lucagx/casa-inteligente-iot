@@ -69,6 +69,20 @@ regras do firmware (incluindo a distância do carro na garagem). Serve de plano 
 - **De qualquer lugar:** publique a pasta em um serviço como Render ou Railway e configure
   `BLYNK_TOKEN`, `BLYNK_SERVER` e **`PAINEL_SENHA`** como variáveis de ambiente.
 
+### Painel do celular (`/painel`)
+
+Controle da casa sem o 3D, feito para o celular: temperatura, umidade e presença ao vivo (SSE),
+modo automático/manual, luz, porta, janela e alarme, e o estado do Blynk e da placa. Tocar num
+atuador com o modo automático ligado passa para o manual, como no painel da casa 3D.
+
+- Abra `http://<servidor>/painel` — usa a mesma senha (`PAINEL_SENHA`) da casa 3D.
+- **Instalar na tela inicial:** no Chrome do Android, botão **Instalar** no topo (ou menu → *Instalar app*);
+  no iPhone, Safari → Compartilhar → *Adicionar à Tela de Início*. Abre em tela cheia, como um app.
+- A instalação e o cache offline só funcionam em **HTTPS** (Render) ou em `localhost`; pelo IP da rede
+  (`http://192.168.x.x:3000`) o painel funciona, mas não instala.
+- Manifest, service worker e ícones (`/painel/manifest.webmanifest`, `/painel/sw.js`, `/painel/icones/`)
+  ficam fora da senha porque o navegador os busca sem credenciais; não têm dados nem controlam nada.
+
 ## Usando na apresentação
 
 - **Câmeras** (barra inferior): Visão geral, Sala, Entrada, Janela, Garagem, Cobertura e Terreno.

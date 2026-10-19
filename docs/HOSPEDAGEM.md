@@ -51,6 +51,25 @@ Start `node server.js`, Instance type Free, Health Check Path `/healthz` e as va
 Para testar antes do merge na `main`: em *Settings → Build & Deploy → Branch*, apontar para `m2/hospedagem`
 e voltar para `main` depois.
 
+## Painel do celular (`/painel`)
+
+O painel de controle para o celular (I1) é servido pelo mesmo serviço e usa a mesma senha:
+`https://…onrender.com/painel`. Como o Render serve em HTTPS, ele **instala na tela inicial** como app:
+
+- **Android (Chrome):** abrir o link, entrar com `casa` + a senha → botão **Instalar** no topo (ou menu ⋮ → *Instalar app*).
+- **iPhone (Safari):** Compartilhar → *Adicionar à Tela de Início*.
+- Manifest, service worker e ícones (`/painel/manifest.webmanifest`, `/painel/sw.js`, `/painel/icones/`) respondem
+  sem senha porque o navegador os busca sem credenciais; não têm dados. Página e `/api` continuam com 401 sem login.
+- Depois de um deploy, o painel já pega o código novo na próxima abertura (o service worker busca na rede primeiro).
+
+Para testar antes do merge na `main`: apontar a *Branch* do serviço para `m3/painel-iob`, como na H2.
+
+Pronto quando (I1):
+
+- [ ] `https://…onrender.com/painel` pede senha e mostra **Blynk ao vivo** + **NodeMCU online**.
+- [ ] Instala na tela inicial do celular e abre em tela cheia.
+- [ ] Luz, porta, janela, alarme e modo auto/manual pelo painel chegam na placa; mudanças na placa aparecem sem recarregar.
+
 ## Manter acordado (opcional)
 
 O plano Free **dorme após 15 min sem tráfego** e leva ~1 min para voltar no primeiro acesso.
