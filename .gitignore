@@ -10,3 +10,11 @@ secrets.h
 build/
 # cópias soltas de .ino na raiz de firmware/ (o sketch vive em firmware/casa_inteligente/)
 firmware/*.ino
+
+.CLAUDE.md
+
+
+docs/*
+!docs/capturas/
+!docs/documentacao/
+!docs/arquitetura_iot_iob.png
