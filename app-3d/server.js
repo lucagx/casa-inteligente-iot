@@ -20,6 +20,8 @@
  * DATABASE_URL     : Postgres do histórico (server/history.js). Sem ela, o histórico fica em memória.
  *                    Rotas GET /api/history e GET /api/events; HISTORICO_POLL_MS = consulta de fundo.
  * PRESENCA_POLL_MS : leitura rápida só do V11 (padrão 500 ms) enquanto há página aberta (B5); 0 desliga.
+ * CONSUMO_W, TARIFA_KWH, TARIFA_BRANCA, META_MENSAL_KWH : consumo e economia (I3, server/consumo.js).
+ * CONSUMO_V15=1    : publica o consumo do dia (kWh) no V15 do Blynk a cada 5 min (depois de criar o datastream, K1).
  *
  * MODO AO VIVO     : BLYNK_TOKEN configurado no .env. O servidor lê os pinos
  *                    virtuais do seu dispositivo e envia cada mudança para a
@@ -136,6 +138,7 @@ const clients = new Set();
 
 function broadcast() {
   syncLuzes(); // luz geral (D1) x cômodos — ver "Luzes por cômodo" abaixo
+  registrarComodos();
   marcarPresenca();
   state.ts = Date.now();
   const payload = `event: state\ndata: ${JSON.stringify(state)}\n\n`;
@@ -414,6 +417,18 @@ function syncLuzes() {
   if (v0 === "1" && !algum) for (const k in state.rooms) state.rooms[k] = 100;
   if (v0 === "0") for (const k in state.rooms) state.rooms[k] = 0;
 }
+// I3: o nível de cada cômodo vai para o histórico como leitura V20 sala, V21 cozinha, V22 quarto, V23 externa
+// (base do consumo por cômodo; os mesmos números podem virar datastreams no Blynk depois)
+const { COMODOS } = require("./server/consumo");
+const comodosGravados = {};
+function registrarComodos() {
+  const mudou = {}, antes = {};
+  for (const [k, pino] of Object.entries(COMODOS)) {
+    const v = String(state.rooms[k]);
+    if (comodosGravados[pino] !== v) { antes[pino] = comodosGravados[pino]; mudou[pino] = comodosGravados[pino] = v; }
+  }
+  if (Object.keys(mudou).length) historico.registrar(mudou, antes);
+}
 // "todos" ajusta os quatro cômodos de uma vez
 async function setRoom(room, level, origem = "painel") {
   const n = Math.round(Math.min(100, Math.max(0, Number(level) || 0)));
@@ -499,6 +514,45 @@ function periodo(q) {
   return Number.isFinite(desde) && Number.isFinite(ate) && desde <= ate ? { desde, ate } : null;
 }
 const lista = (txt) => (txt ? String(txt).split(",").map((x) => x.trim()).filter(Boolean) : null);
+
+// ------------------------------------------------------------------
+// Consumo de energia e economia (I3) — cálculo em server/consumo.js a partir do histórico
+// ------------------------------------------------------------------
+const consumo = require("./server/consumo");
+const CONSUMO = {
+  potencias: consumo.lerPares(process.env.CONSUMO_W, consumo.POTENCIA_PADRAO),
+  tarifa: Number(process.env.TARIFA_KWH) > 0 ? Number(process.env.TARIFA_KWH) : 0.85,
+  fatores: consumo.lerPares(process.env.TARIFA_BRANCA, consumo.FATOR_BRANCA_PADRAO),
+  metaMensal: Number(process.env.META_MENSAL_KWH) > 0 ? Number(process.env.META_MENSAL_KWH) : 25,
+};
+async function calcularConsumo() {
+  const agora = Date.now();
+  const mes0 = new Date(agora); mes0.setDate(1); mes0.setHours(0, 0, 0, 0);
+  const hoje0 = new Date(agora); hoje0.setHours(0, 0, 0, 0);
+  // o mês todo e, no mínimo, 14 dias (para comparar com a semana anterior)
+  const desde = Math.max(Math.min(mes0.getTime(), hoje0.getTime() - 13 * DIA_MS), agora - RETENCAO_DIAS * DIA_MS);
+  const leituras = await historico.leituras({ desde, ate: agora, pinos: ["V0", ...Object.values(consumo.COMODOS)] });
+  return consumo.calcular(leituras, { ...CONSUMO, agora });
+}
+app.get("/api/consumo", async (_req, res) => {
+  try {
+    res.json(await calcularConsumo());
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
+  }
+});
+// consumo do dia no V15 do Blynk (só ao vivo e com CONSUMO_V15=1: o datastream precisa existir — K1)
+if (MODE === "live" && process.env.CONSUMO_V15 === "1") {
+  let avisou = false;
+  setInterval(async () => {
+    try {
+      await blynkUpdate("V15", (await calcularConsumo()).hoje.kWh.toFixed(3));
+    } catch (err) {
+      if (!avisou) console.warn(`[consumo] V15 no Blynk: ${err.message}`);
+      avisou = true;
+    }
+  }, 5 * 60000);
+}
 
 app.get("/api/history", async (req, res) => {
   const p = periodo(req.query);

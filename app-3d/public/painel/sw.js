@@ -3,7 +3,7 @@
 // A navegação só sai do cache quando o celular está sem internet; com rede quem responde é o servidor,
 // assim o pedido de senha (Basic Auth, PAINEL_SENHA) continua aparecendo normalmente.
 const CACHE = 'painel-v2';
-const CASCA = ['/painel/', '/painel/painel.css', '/painel/painel.js', '/painel/historico.js', '/js/format.js', '/js/config.js',
+const CASCA = ['/painel/', '/painel/painel.css', '/painel/painel.js', '/painel/historico.js', '/painel/consumo.js', '/js/format.js', '/js/config.js',
   '/vendor/uplot/uPlot.esm.js', '/vendor/uplot/uPlot.min.css'];
 
 self.addEventListener('install', (e) => {

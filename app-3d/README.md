@@ -95,6 +95,22 @@ dia** (somado a partir do V0 e do valor `antes` do período) e a **linha do temp
 temperatura e luz se atualizam a cada 5 min com a aba aberta. Sem banco (503), a aba avisa e a casa segue normal.
 No modo demonstração já vem com 7 dias sintéticos.
 
+### Consumo de energia (aba Consumo)
+
+Em `/painel/#consumo`: kWh e R$ de hoje e do mês (com previsão), barra da **meta mensal**, comparação
+("você economizou X%" — últimos 7 dias × semana anterior; com menos de 2 semanas de histórico, ontem × média
+dos dias anteriores), uma **dica** gerada pelos números (meta, horário de ponta ou quem mais gasta), últimos 7 dias
+por cômodo, consumo do mês por cômodo e a simulação da **tarifa branca** (ponta 18h–21h nos dias úteis).
+
+- Cálculo no servidor (`server/consumo.js`, rota `GET /api/consumo`), minuto a minuto a partir do histórico:
+  potência do cômodo × nível (0–100 %) × tempo, mais a base fixa (placa e sensores). Os níveis dos cômodos são
+  gravados no histórico como leituras **V20 sala, V21 cozinha, V22 quarto, V23 externa**; antes do primeiro
+  registro de um cômodo vale a regra da luz geral (V0 ligado ⇒ todos a 100 %).
+- Potências de uma casa real equivalente (o protoboard gasta miliwatts): `CONSUMO_W`, `TARIFA_KWH`,
+  `TARIFA_BRANCA`, `META_MENSAL_KWH` (ver `.env.example`).
+- `CONSUMO_V15=1` publica o consumo do dia no V15 do Blynk a cada 5 min — ligar depois de criar o datastream (K1).
+- O carregador do carro (V3, M4) entra aqui quando existir.
+
 ### Luzes por cômodo
 
 O LED do protoboard (**D1, V0**) é a **luz geral** da casa, e cada cômodo (**sala, cozinha, quarto, externa**)

@@ -3,6 +3,7 @@
 import { fmt } from '/js/format.js';
 import { SENSORES } from '/js/config.js';
 import { criarHistorico } from '/painel/historico.js';
+import { criarConsumo } from '/painel/consumo.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -324,14 +325,16 @@ async function poll() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && Date.now() - lastStateAt > 5000) connect();
 });
-// ---------- abas (Casa · Histórico), pelo endereço: /painel/#historico ----------
+// ---------- abas (Casa · Histórico · Consumo), pelo endereço: /painel/#historico ----------
 const historico = criarHistorico({ toast });
+const consumo = criarConsumo();
 function abrirAba() {
   const aba = (location.hash.slice(1) || 'casa');
   const existe = document.getElementById(`tab-${aba}`) ? aba : 'casa';
   document.querySelectorAll('.tab').forEach((t) => (t.hidden = t.id !== `tab-${existe}`));
   document.querySelectorAll('.tabbar a').forEach((a) => a.classList.toggle('on', a.dataset.tab === existe));
   if (existe === 'historico') historico.abrir(); else historico.fechar();
+  if (existe === 'consumo') consumo.abrir(); else consumo.fechar();
   scrollTo(0, 0);
 }
 addEventListener('hashchange', abrirAba);

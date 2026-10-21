@@ -111,6 +111,39 @@
       <p class="err" id="histErro" hidden></p>
     </div>
 
+    <!-- I3: consumo de energia e economia — montado por consumo.js ao abrir a aba -->
+    <div class="tab" id="tab-consumo" hidden>
+      <div class="kpis">
+        <div class="card kpi"><span class="k">Hoje</span><b id="cHoje">--</b><small id="cHojeR"></small></div>
+        <div class="card kpi"><span class="k">Este mês</span><b id="cMes">--</b><small id="cMesR"></small></div>
+      </div>
+      <section>
+        <h2>Meta do mês</h2>
+        <div class="card"><div class="meta"><i id="cMetaBar"></i></div><p class="hint" id="cMetaTxt"></p></div>
+      </section>
+      <div class="card cmp" id="cCmp" hidden><b id="cCmpN"></b><span id="cCmpT"></span></div>
+      <div class="card dica"><span class="k">Dica da casa</span><p id="cDica">--</p></div>
+      <section>
+        <h2>Últimos 7 dias (kWh)</h2>
+        <div class="card"><div class="bars" id="cDias"></div><div class="legenda" id="cLegenda"></div></div>
+      </section>
+      <section>
+        <h2>Por cômodo no mês</h2>
+        <div class="card" id="cComodos"></div>
+      </section>
+      <section>
+        <h2>Tarifa branca</h2>
+        <div class="card">
+          <div class="faixas" id="cFaixas"></div>
+          <div class="tleg"><span><i class="fora"></i>fora de ponta</span><span><i class="intermediaria"></i>intermediária</span><span><i class="ponta"></i>ponta 18h–21h</span></div>
+          <div class="tarifas"><span>Convencional<b id="cConv">--</b></span><span>Branca<b id="cBranca">--</b></span></div>
+          <p class="hint" id="cBrancaTxt"></p>
+        </div>
+      </section>
+      <p class="hint" id="cNota"></p>
+      <p class="err" id="consErro" hidden></p>
+    </div>
+
     <div class="err" id="errBox" hidden></div>
 
     <footer class="foot">NodeMCU ESP8266 · Blynk · <a href="/">abrir a casa 3D</a></footer>
@@ -118,6 +151,7 @@
   <nav class="tabbar" aria-label="Seções">
     <a href="#casa" data-tab="casa" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>Casa</a>
     <a href="#historico" data-tab="historico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="M7 15l4-5 3 3 5-7"/></svg>Histórico</a>
+    <a href="#consumo" data-tab="consumo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>Consumo</a>
   </nav>
   <div class="toast" id="toast" role="status"></div>
 
