@@ -2,6 +2,7 @@
 // Mesma regra do painel da casa 3D (js/ui.js): comando de atuador no modo automático passa antes para o manual.
 import { fmt } from '/js/format.js';
 import { SENSORES } from '/js/config.js';
+import { criarHistorico } from '/painel/historico.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -303,6 +304,7 @@ function connect() {
   es?.close();
   es = new EventSource('/api/stream');
   es.addEventListener('state', (e) => applyState(JSON.parse(e.data)));
+  es.addEventListener('evento', (e) => historico.evento(JSON.parse(e.data))); // H3: evento novo do histórico
   es.onopen = () => { clearInterval(pollTimer); pollTimer = null; };
   es.onerror = () => {
     setOffline();
@@ -322,6 +324,19 @@ async function poll() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && Date.now() - lastStateAt > 5000) connect();
 });
+// ---------- abas (Casa · Histórico), pelo endereço: /painel/#historico ----------
+const historico = criarHistorico({ toast });
+function abrirAba() {
+  const aba = (location.hash.slice(1) || 'casa');
+  const existe = document.getElementById(`tab-${aba}`) ? aba : 'casa';
+  document.querySelectorAll('.tab').forEach((t) => (t.hidden = t.id !== `tab-${existe}`));
+  document.querySelectorAll('.tabbar a').forEach((a) => a.classList.toggle('on', a.dataset.tab === existe));
+  if (existe === 'historico') historico.abrir(); else historico.fechar();
+  scrollTo(0, 0);
+}
+addEventListener('hashchange', abrirAba);
+abrirAba();
+
 connect();
 render();
 

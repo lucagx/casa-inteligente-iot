@@ -106,6 +106,8 @@ app.use(express.static(path.join(__dirname, "public")));
 // (só o Blynk precisa de internet, no modo ao vivo)
 app.use("/vendor/three", express.static(path.join(__dirname, "node_modules/three")));
 app.use("/vendor/fonts", express.static(path.join(__dirname, "node_modules/@fontsource")));
+// gráficos do painel IoB (I2), também local
+app.use("/vendor/uplot", express.static(path.join(__dirname, "node_modules/uplot/dist")));
 
 // ------------------------------------------------------------------
 // Estado compartilhado

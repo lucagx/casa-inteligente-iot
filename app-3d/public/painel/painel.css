@@ -174,3 +174,60 @@ body.alarm .vignette { opacity: 1; animation: alarm .6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-duration: 0.01ms !important; }
 }
+
+/* ---------- abas (Casa · Histórico) ---------- */
+body { padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
+.tab { display: flex; flex-direction: column; gap: 22px; }
+.tabbar {
+  position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; display: flex; justify-content: center; gap: 6px;
+  padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px)); background: rgba(7, 11, 18, 0.92);
+  border-top: 1px solid var(--stroke); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.tabbar a {
+  flex: 1; max-width: 160px; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 0;
+  border-radius: 12px; text-decoration: none; color: var(--muted); font-size: 11.5px; font-weight: 500;
+}
+.tabbar svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.tabbar a.on { color: var(--ink); background: var(--card); }
+.tabbar a.on svg { color: var(--cyan); }
+.toast { z-index: 30; }
+
+/* ---------- histórico (I2) ---------- */
+.h2row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.seg.mini { display: inline-flex; padding: 3px; }
+.seg.mini button { min-height: 30px; padding: 0 11px; font-size: 12px; }
+.tagline { color: var(--faint); letter-spacing: 0.06em; margin-left: 6px; text-transform: none; }
+.card { padding: 12px; border-radius: 18px; border: 1px solid var(--stroke); background: var(--card); overflow: hidden; }
+.chart { min-height: 200px; }
+/* uPlot no tema escuro */
+.uplot { font-family: var(--body); color: var(--muted); }
+.uplot .u-legend { font-size: 12px; margin-top: 6px; }
+.uplot .u-legend th { font-weight: 500; }
+.uplot .u-legend .u-marker { border-radius: 3px; }
+.uplot .u-cursor-x, .uplot .u-cursor-y { border-color: rgba(255, 255, 255, 0.25) !important; }
+.heat { display: grid; grid-template-columns: 46px repeat(24, 1fr); gap: 2px; align-items: center; }
+.heat .hh { font-family: var(--mono); font-size: 9px; color: var(--faint); }
+.heat .hd { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.heat i { aspect-ratio: 1; border-radius: 3px; background: rgba(255, 255, 255, 0.04); position: relative; }
+.heat i::after { content: ''; position: absolute; inset: 0; border-radius: 3px; background: var(--cyan); opacity: var(--a); }
+.bars { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; height: 170px; }
+.bar-col { display: grid; grid-template-rows: auto 1fr auto; gap: 4px; text-align: center; min-width: 0; }
+.bv { font-family: var(--mono); font-size: 9.5px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.bb { display: flex; align-items: flex-end; border-radius: 6px; background: rgba(255, 255, 255, 0.04); }
+.bb i { display: block; width: 100%; border-radius: 6px; background: linear-gradient(180deg, var(--amber), rgba(255, 194, 122, 0.35)); min-height: 2px; transition: height .6s ease; }
+.bl { font-size: 10.5px; color: var(--faint); white-space: nowrap; }
+.timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.timeline .ev {
+  display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 10px; padding: 10px 12px;
+  border-radius: 14px; border: 1px solid var(--stroke); background: var(--card); border-left: 3px solid var(--faint);
+}
+.timeline .ev.amber { border-left-color: var(--amber); }
+.timeline .ev.cyan { border-left-color: var(--cyan); }
+.timeline .ev.red { border-left-color: var(--red); }
+.timeline .ev.novo { animation: novo 1.6s ease; }
+@keyframes novo { from { background: rgba(94, 231, 255, 0.18); } }
+.timeline time { font-family: var(--mono); font-size: 12px; color: var(--ink); display: flex; flex-direction: column; line-height: 1.2; }
+.timeline time small { font-size: 9.5px; color: var(--faint); }
+.et { font-size: 13.5px; }
+.eo { font-family: var(--mono); font-size: 10px; color: var(--muted); padding: 3px 7px; border-radius: 999px; background: rgba(255, 255, 255, 0.06); white-space: nowrap; }
+.more { align-self: center; }

@@ -86,6 +86,15 @@ atuador com o modo automático ligado passa para o manual, como no painel da cas
 - Manifest, service worker e ícones (`/painel/manifest.webmanifest`, `/painel/sw.js`, `/painel/icones/`)
   ficam fora da senha porque o navegador os busca sem credenciais; não têm dados nem controlam nada.
 
+### Histórico no celular (aba Histórico)
+
+Em `/painel/#historico` (aba embaixo): temperatura e umidade de 24 h ou 7 dias (uPlot, servido localmente em
+`/vendor/uplot`), **mapa de calor da presença por hora × dia** dos últimos 7 dias, tempo de **luz geral ligada por
+dia** (somado a partir do V0 e do valor `antes` do período) e a **linha do tempo** dos eventos com quem fez
+(automático, painel, cena, app/botão, sensor), com filtros. Evento novo chega ao vivo pelo stream (`event: evento`);
+temperatura e luz se atualizam a cada 5 min com a aba aberta. Sem banco (503), a aba avisa e a casa segue normal.
+No modo demonstração já vem com 7 dias sintéticos.
+
 ### Luzes por cômodo
 
 O LED do protoboard (**D1, V0**) é a **luz geral** da casa, e cada cômodo (**sala, cozinha, quarto, externa**)

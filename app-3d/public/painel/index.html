@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="/vendor/fonts/dm-sans/500.css">
   <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/400.css">
   <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/600.css">
+  <link rel="stylesheet" href="/vendor/uplot/uPlot.min.css">
   <link rel="stylesheet" href="/painel/painel.css">
 </head>
 <body>
@@ -39,6 +40,7 @@
       <div class="chip quiet" id="chipAge"><span>aguardando dados</span></div>
     </div>
 
+    <div class="tab" id="tab-casa">
     <section>
       <h2>Ambiente</h2>
       <div class="sensors" id="sensors"></div>
@@ -70,10 +72,53 @@
       <div class="devices" id="devices"></div>
     </section>
 
+    </div>
+
+    <!-- I2: histórico (gráficos e linha do tempo) — montado por historico.js ao abrir a aba -->
+    <div class="tab" id="tab-historico" hidden>
+      <section>
+        <div class="h2row">
+          <h2>Temperatura e umidade</h2>
+          <div class="seg mini" role="group" aria-label="Período">
+            <button type="button" data-periodo="24h" class="on">24 h</button>
+            <button type="button" data-periodo="7d">7 dias</button>
+          </div>
+        </div>
+        <div class="card"><div class="chart" id="chTemp"></div></div>
+      </section>
+      <section>
+        <h2>Presença por hora <span class="tagline" id="hmTotal"></span></h2>
+        <div class="card"><div class="heat" id="heat"></div></div>
+        <p class="hint">Cada quadrado é uma hora dos últimos 7 dias; quanto mais claro, mais detecções do PIR.</p>
+      </section>
+      <section>
+        <h2>Luz geral ligada por dia</h2>
+        <div class="card"><div class="bars" id="luzDia"></div></div>
+      </section>
+      <section>
+        <div class="h2row">
+          <h2>Linha do tempo</h2>
+          <div class="seg mini" role="group" aria-label="Filtro" id="tlFiltro">
+            <button type="button" data-tipo="" class="on">Tudo</button>
+            <button type="button" data-tipo="luz">Luz</button>
+            <button type="button" data-tipo="presenca,alarme">Segurança</button>
+            <button type="button" data-tipo="cena">Cenas</button>
+          </div>
+        </div>
+        <ol class="timeline" id="timeline"></ol>
+        <button type="button" class="ibtn more" id="tlMais" hidden>Mostrar mais</button>
+      </section>
+      <p class="err" id="histErro" hidden></p>
+    </div>
+
     <div class="err" id="errBox" hidden></div>
 
     <footer class="foot">NodeMCU ESP8266 · Blynk · <a href="/">abrir a casa 3D</a></footer>
   </div>
+  <nav class="tabbar" aria-label="Seções">
+    <a href="#casa" data-tab="casa" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>Casa</a>
+    <a href="#historico" data-tab="historico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="M7 15l4-5 3 3 5-7"/></svg>Histórico</a>
+  </nav>
   <div class="toast" id="toast" role="status"></div>
 
   <script type="module" src="/painel/painel.js"></script>
