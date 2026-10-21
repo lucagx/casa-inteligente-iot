@@ -17,6 +17,8 @@
  *                    V6/V10/V12 e a casa 3D esconde tudo deles. SENSORES=ldr,garagem religa.
  * PAINEL_SENHA     : com a variável definida, tudo (páginas, /api e o stream) pede usuário e senha
  *                    (Basic Auth; usuário em PAINEL_USUARIO, padrão "casa"). Sem ela fica aberto (dev).
+ * DATABASE_URL     : Postgres do histórico (server/history.js). Sem ela, o histórico fica em memória.
+ *                    Rotas GET /api/history e GET /api/events; HISTORICO_POLL_MS = consulta de fundo.
  *
  * MODO AO VIVO     : BLYNK_TOKEN configurado no .env. O servidor lê os pinos
  *                    virtuais do seu dispositivo e envia cada mudança para a
@@ -31,6 +33,7 @@ require("dotenv").config({ quiet: true });
 const express = require("express");
 const path = require("path");
 const crypto = require("crypto");
+const { criarHistorico, RETENCAO_DIAS } = require("./server/history");
 
 const PORT = Number(process.env.PORT || 3000);
 const TOKEN = (process.env.BLYNK_TOKEN || "").trim();
@@ -132,15 +135,31 @@ function broadcast() {
   for (const res of clients) res.write(payload);
 }
 
+// Histórico (H3): leituras e eventos para o IoB; Postgres com DATABASE_URL, senão memória
+const historico = criarHistorico({
+  url: (process.env.DATABASE_URL || "").trim(),
+  demo: MODE === "demo",
+  valores: () => state.values,
+  lidoEm: () => state.readAt,
+});
+// cada evento novo também vai pelo stream (event: evento), para a linha do tempo do painel
+historico.aoEvento((ev) => {
+  const payload = `event: evento\ndata: ${JSON.stringify(ev)}\n\n`;
+  for (const res of clients) res.write(payload);
+});
+
 function setValues(patch) {
-  let changed = false;
+  const mudou = {}, antes = {};
   for (const [k, v] of Object.entries(patch)) {
     const s = String(v);
     if (state.values[k] !== s) {
+      antes[k] = state.values[k];
       state.values[k] = s;
-      changed = true;
+      mudou[k] = s;
     }
   }
+  const changed = Object.keys(mudou).length > 0;
+  if (changed) historico.registrar(mudou, antes);
   return changed;
 }
 
@@ -204,6 +223,7 @@ async function pollBlynk() {
   }
 }
 
+let placaVista = false; // a 1ª resposta só registra o estado, sem evento de online/offline
 async function pollDevice() {
   try {
     const r = await fetch(`${base}/isHardwareConnected?token=${encodeURIComponent(TOKEN)}`, {
@@ -212,8 +232,10 @@ async function pollDevice() {
     const online = (await r.text()).trim() === "true";
     if (online !== state.deviceOnline) {
       state.deviceOnline = online;
+      if (placaVista) historico.evento("placa", "sistema", online ? "online" : "offline");
       broadcast();
     }
+    placaVista = true;
   } catch { /* mantém último estado */ }
 }
 
@@ -303,6 +325,7 @@ app.get("/api/stream", (req, res) => {
 app.post("/api/command", async (req, res) => {
   const { pin, value } = req.body || {};
   if (!WRITABLE.has(pin)) return res.status(400).json({ ok: false, error: `Pino ${pin} não aceita comando.` });
+  historico.comando(pin); // as mudanças que vierem deste comando ficam com origem "painel"
   try {
     if (MODE === "demo") {
       simCommand(pin, value);
@@ -325,8 +348,10 @@ app.post("/api/command", async (req, res) => {
 // ------------------------------------------------------------------
 const { criarCenas } = require("./server/cenas");
 
-// mesmo caminho do /api/command: simulação no modo demonstração, Blynk no ao vivo
-async function comandar(pin, value) {
+// mesmo caminho do /api/command: simulação no modo demonstração, Blynk no ao vivo.
+// origem vai para o histórico (H3): as mudanças que vierem deste comando ficam com ela ("painel" ou "cena")
+async function comandar(pin, value, origem = "painel") {
+  historico.comando(pin, origem);
   if (MODE === "demo") return simCommand(pin, value);
   await blynkUpdate(pin, value);
   if (pin === "V2") setValues({ V7: String(value) === "1" ? "ABERTA" : "FECHADA" });
@@ -350,15 +375,15 @@ function syncLuzes() {
   if (v0 === "0") for (const k in state.rooms) state.rooms[k] = 0;
 }
 // "todos" ajusta os quatro cômodos de uma vez
-async function setRoom(room, level) {
+async function setRoom(room, level, origem = "painel") {
   const n = Math.round(Math.min(100, Math.max(0, Number(level) || 0)));
   const alvo = room === "todos" ? Object.keys(state.rooms) : [room];
   if (!alvo.every((k) => k in state.rooms)) throw Object.assign(new Error(`Cômodo "${room}" não existe.`), { status: 400 });
   for (const k of alvo) state.rooms[k] = n;
   const algum = Object.values(state.rooms).some((x) => x > 0);
   if ((state.values.V0 === "1") !== algum) {
-    if (state.values.V3 === "1") await comandar("V3", 0); // o firmware só aceita comando de luz no manual
-    await comandar("V0", algum ? 1 : 0);
+    if (state.values.V3 === "1") await comandar("V3", 0, origem); // o firmware só aceita comando de luz no manual
+    await comandar("V0", algum ? 1 : 0, origem);
   }
   broadcast();
 }
@@ -374,9 +399,10 @@ app.post("/api/room", async (req, res) => {
 
 const cenas = criarCenas({
   // "luz:quarto" e afins = cômodos (acendem/apagam o D1 pela regra acima); "V…" = pino da placa
+  // no histórico, as mudanças da cena ficam com origem "cena"
   async enviar(pin, value) {
-    if (pin.startsWith("luz:")) return setRoom(pin.slice(4), value);
-    return comandar(pin, value);
+    if (pin.startsWith("luz:")) return setRoom(pin.slice(4), value, "cena");
+    return comandar(pin, value, "cena");
   },
   aoMudar(cena) {
     state.scene = cena;
@@ -384,7 +410,8 @@ const cenas = criarCenas({
   },
   aoTerminar(cena, erro) {
     if (MODE === "live") setTimeout(pollBlynk, 400); // confirma o estado real da placa
-    // registro: no console por enquanto; com o histórico (H3) vira historico.evento("cena", cena.origem, cena.nome)
+    // a cena em si vai para o histórico na hora em que começou; origem = onde foi tocada (painel/casa3d/blynk)
+    historico.evento("cena", cena.origem, erro ? `${cena.nome} (falhou)` : cena.nome, cena.inicio);
     console.log(`[cena] ${cena.nome} (${cena.origem}) ${erro ? `falhou no passo ${cena.passo + 1}: ${erro.message}` : "concluída"}`);
   },
 });
@@ -415,13 +442,57 @@ app.post("/api/sim", (req, res) => {
 });
 
 // ------------------------------------------------------------------
+// Histórico (H3) — usado pelo painel IoB (gráficos, linha do tempo, consumo)
+// ------------------------------------------------------------------
+const DIA_MS = 86400000;
+// "24h", "7d", "30m", data ISO ou milissegundos
+function quando(txt, padrao) {
+  if (txt === undefined || txt === "") return padrao;
+  const rel = /^(\d+(?:\.\d+)?)(m|h|d)$/.exec(String(txt));
+  if (rel) return Date.now() - Number(rel[1]) * { m: 60000, h: 3600000, d: DIA_MS }[rel[2]];
+  const n = Number(txt);
+  return Number.isFinite(n) ? n : Date.parse(txt);
+}
+function periodo(q) {
+  const ate = quando(q.ate, Date.now());
+  const desde = Math.max(quando(q.desde, ate - DIA_MS), ate - RETENCAO_DIAS * DIA_MS);
+  return Number.isFinite(desde) && Number.isFinite(ate) && desde <= ate ? { desde, ate } : null;
+}
+const lista = (txt) => (txt ? String(txt).split(",").map((x) => x.trim()).filter(Boolean) : null);
+
+app.get("/api/history", async (req, res) => {
+  const p = periodo(req.query);
+  if (!p) return res.status(400).json({ ok: false, error: "Período inválido: use desde/ate como 24h, 7d, data ISO ou ms." });
+  const pinos = (lista(req.query.pinos)?.map((x) => x.toUpperCase()) || PINS).filter((x) => /^V\d{1,3}$/.test(x));
+  try {
+    res.json(await historico.leituras({ ...p, pinos }));
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
+  }
+});
+
+app.get("/api/events", async (req, res) => {
+  const p = periodo({ desde: "7d", ...req.query });
+  if (!p) return res.status(400).json({ ok: false, error: "Período inválido: use desde/ate como 24h, 7d, data ISO ou ms." });
+  const limite = Math.min(1000, Math.max(1, Number(req.query.limite) || 200));
+  try {
+    res.json(await historico.eventos({ ...p, tipos: lista(req.query.tipo), limite }));
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
+  }
+});
+
+// ------------------------------------------------------------------
 // Início
 // ------------------------------------------------------------------
+// sem página aberta, uma consulta leve de fundo mantém o histórico (0 desliga)
+const HIST_POLL_MS = Number(process.env.HISTORICO_POLL_MS ?? 60000);
 if (MODE === "live") {
-  // só consulta o Blynk enquanto houver alguém com a página aberta,
+  // só consulta o Blynk no ritmo rápido enquanto houver alguém com a página aberta,
   // para economizar a cota de requisições do plano gratuito
   setInterval(() => clients.size && pollBlynk(), POLL_MS);
   setInterval(() => clients.size && pollDevice(), 5000);
+  if (HIST_POLL_MS > 0) setInterval(() => !clients.size && pollBlynk(), Math.max(POLL_MS, HIST_POLL_MS));
   pollBlynk();
   pollDevice();
 } else {
@@ -438,6 +509,12 @@ if (MODE === "live") {
 // batimento: mantém a página informada de que o elo está vivo
 setInterval(() => clients.size && broadcast(), 3000);
 
+historico.iniciar().catch((err) => console.warn(`[historico] ao iniciar: ${err.message}`));
+// o Render manda SIGTERM a cada deploy: grava o que estiver na fila antes de sair
+for (const sinal of ["SIGTERM", "SIGINT"]) {
+  process.once(sinal, () => historico.fechar().catch(() => {}).finally(() => process.exit(0)));
+}
+
 app.listen(PORT, "0.0.0.0", () => {
   const os = require("os");
   const ips = Object.values(os.networkInterfaces())
@@ -448,6 +525,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  Modo: ${MODE === "live" ? `AO VIVO (Blynk: ${SERVER})` : "DEMONSTRAÇÃO (sensores simulados)"}`);
   console.log(`  Sensores opcionais: LDR ${SENSORES.ldr ? "ligado" : "desligado"} · HC-SR04 ${SENSORES.garagem ? "ligado" : "desligado"}`);
   console.log(`  Senha do painel: ${SENHA ? `ativa (usuário "${USUARIO}")` : "desligada (defina PAINEL_SENHA antes de publicar)"}`);
+  console.log(`  Histórico: ${historico.descricao}${MODE === "live" ? ` · consulta de fundo ${HIST_POLL_MS > 0 ? `a cada ${Math.max(POLL_MS, HIST_POLL_MS) / 1000} s` : "desligada"}` : ""}`);
   if (process.env.RENDER_EXTERNAL_URL) {
     console.log(`  Publicado em: ${process.env.RENDER_EXTERNAL_URL}`);
   } else {

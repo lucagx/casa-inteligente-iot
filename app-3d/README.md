@@ -41,6 +41,8 @@ e o servidor não lê nem simula V6/V10/V12. O código continua: `SENSORES=ldr,g
 | `DEMO` | `true` força o modo demonstração |
 | `SENSORES` | Sensores opcionais presentes: `ldr`, `garagem` (vírgula). Vazio = nenhum |
 | `PAINEL_SENHA` / `PAINEL_USUARIO` | Senha do painel (Basic Auth, usuário padrão `casa`). Obrigatória antes de publicar: o link controla luz, porta e alarme. Vazia = aberto (dev). `/healthz` fica sempre aberto, sem dados, para o health check |
+| `DATABASE_URL` | Postgres do histórico (Supabase/Neon). Vazio = memória. Ignorado no modo demonstração. Veja "Histórico" abaixo |
+| `HISTORICO_POLL_MS` | Consulta de fundo ao Blynk sem página aberta, para o histórico (padrão 60000; `0` desliga) |
 
 ## Rodando
 
@@ -168,8 +170,46 @@ sol muda ou porta/janela/carro se movem; nenhuma luz pontual projeta sombra; os 
 compilados na tela de carregamento. Uma proteção no pós-processamento impede que um pixel
 inválido (NaN) se espalhe pelo bloom — era a causa da tela preta quando o alarme disparava.
 
+## Histórico (API para o painel IoB)
+
+O servidor guarda leituras e eventos (`server/history.js`): em um Postgres externo com `DATABASE_URL`,
+senão em memória. No modo demonstração é sempre memória, já com **7 dias sintéticos** (mesmas regras do
+firmware + uma rotina de casa), para os gráficos terem dados sem a placa. Testes: `npm test`.
+
+- **Leituras:** cada pino só quando muda; V4/V5 uma amostra a cada 5 min.
+- **Eventos:** `luz` (ligada/desligada), `porta` (destrancada/trancada), `janela` (aberta/fechada),
+  `modo` (automatico/manual), `alarme` (armado/desarmado/disparado), `presenca` (detectada), `placa` (online/offline),
+  `cena` (nome da cena, ex. `Saí`; `Saí (falhou)` se parou no meio — origem = onde foi tocada: `painel`, `casa3d` ou `blynk`).
+- **Origem:** `painel` (comando pelo `/api/command` ou cômodo pelo `/api/room`), `cena` (mudanças feitas por uma cena), `automatico` (regra do firmware),
+  `dispositivo` (app do Blynk ou botão), `sensor` (PIR/buzzer), `sistema`.
+- Guarda 90 dias. Período em `desde`/`ate`: `30m`, `24h`, `7d`, data ISO ou milissegundos.
+
+`GET /api/history?desde=24h&ate=&pinos=V4,V5` (sem `pinos` = todos)
+
+```json
+{ "motor": "postgres", "desde": 1792360000000, "ate": 1792446400000,
+  "pinos": { "V4": [[1792360200000, 24.8], …], "V5": [[1792360200000, 61], …] },
+  "antes": { "V4": [1792359900000, 24.6] } }
+```
+
+Cada ponto é `[ts em ms, valor]` (número quando dá, senão texto, ex.: `"ABERTA"`). `antes` é o último valor
+de cada pino antes de `desde` — o estado inicial para somar tempo de luz ligada, por exemplo.
+
+`GET /api/events?desde=7d&tipo=presenca,luz&limite=200` (padrão: 7 dias, todos os tipos, 200; máximo 1000)
+
+```json
+{ "motor": "memoria", "desde": …, "ate": …,
+  "eventos": [{ "ts": 1792446000000, "tipo": "luz", "origem": "automatico", "detalhe": "ligada" }, …] }
+```
+
+Eventos vêm do mais novo ao mais antigo. Ao vivo, cada evento novo também chega pelo `/api/stream`
+como `event: evento` (mesmo formato). Banco fora do ar → 503 nas duas rotas; a casa continua funcionando
+e a fila é gravada quando o banco volta. As cenas (I4) já registram: cada comando delas passa por
+`comandar(pino, valor, "cena")` no `server.js` (que chama `historico.comando`) e a cena em si vira um evento `cena`.
+
 ## Observações
 
 - O plano gratuito do Blynk tem limite de mensagens/requisições. O firmware só publica
-  quando um valor muda e o servidor só consulta o Blynk enquanto a página está aberta.
+  quando um valor muda e o servidor só consulta o Blynk no ritmo rápido enquanto a página está aberta;
+  sem página, uma consulta a cada `HISTORICO_POLL_MS` (60 s) mantém o histórico (`0` desliga).
 - three.js e as fontes são servidos localmente: a parte visual funciona sem internet.

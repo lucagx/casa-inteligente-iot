@@ -51,6 +51,31 @@ Start `node server.js`, Instance type Free, Health Check Path `/healthz` e as va
 Para testar antes do merge na `main`: em *Settings → Build & Deploy → Branch*, apontar para `m2/hospedagem`
 e voltar para `main` depois.
 
+## Banco do histórico (H3)
+
+O disco do Render some a cada deploy e o Postgres grátis do próprio Render expira em 30 dias, então o histórico
+(leituras e eventos do IoB) fica num **Postgres grátis do Supabase**. O Neon também funciona, mas o limite de horas
+de processamento do plano grátis tende a estourar, porque o servidor grava a cada poucos minutos e não deixa o banco dormir.
+
+1. supabase.com → entrar com o GitHub → **New project**: nome `casa-inteligente`, gerar e guardar a senha do banco,
+   região **East US (North Virginia)** (a mesma do Render: grava mais rápido).
+2. No projeto: **Connect** → aba *Connection String* → modo **Transaction pooler** (porta 6543; funciona com IPv4,
+   que é o que o Render usa). Copiar a URL e trocar `[YOUR-PASSWORD]` pela senha do passo 1.
+3. Render → serviço → **Environment** → `DATABASE_URL` = a URL → *Save*. O serviço reinicia e cria as tabelas
+   `leituras` e `eventos` sozinho. Nos logs: `Histórico: Postgres (DATABASE_URL)`.
+4. Conferir: `https://…onrender.com/api/events?desde=1h` (com a senha) responde `"motor": "postgres"`.
+   No Supabase, *Table Editor* mostra as linhas chegando.
+
+Para usar o mesmo banco no PC, colocar a mesma `DATABASE_URL` no `app-3d/.env`. No **modo demonstração o banco
+nunca é usado** (fica em memória com 7 dias sintéticos), para dados simulados não se misturarem com os reais.
+
+O Supabase grátis **pausa o projeto após 7 dias sem uso**; com o servidor gravando, isso não acontece. Se pausar,
+o servidor continua funcionando, avisa no log e as rotas do histórico respondem 503 até reativar no painel.
+
+Também em `render.yaml`: `TZ=America/Sao_Paulo` (horas do histórico no horário do Brasil) e
+`HISTORICO_POLL_MS=60000` (sem página aberta, lê o Blynk a cada 60 s para o histórico não ter buracos, ~43 mil
+consultas/mês; `0` desliga). Se o serviço não foi criado pelo Blueprint, adicionar as duas no *Environment*.
+
 ## Painel do celular (`/painel`)
 
 O painel de controle para o celular (I1) é servido pelo mesmo serviço e usa a mesma senha:
@@ -76,16 +101,16 @@ O plano Free **dorme após 15 min sem tráfego** e leva ~1 min para voltar no pr
 Um monitor gratuito (ex.: [UptimeRobot](https://uptimerobot.com)) evita isso:
 
 - Tipo HTTP(s), URL `https://…onrender.com/healthz`, intervalo de 10 min.
-- `/healthz` não exige senha nem consulta o Blynk: o servidor só lê o Blynk enquanto há uma página aberta,
-  então o monitor **não gasta a cota** do plano grátis do Blynk.
+- `/healthz` não exige senha nem consulta o Blynk, então o monitor **não gasta a cota** do plano grátis do Blynk.
+  É ele que mantém o servidor acordado — e portanto gravando o histórico — quando ninguém está com a página aberta.
 - 750 h grátis/mês cobrem um serviço ligado o mês todo (31 × 24 = 744 h). Não criar um segundo serviço Free acordado.
 
 Na apresentação: abrir o link uns minutos antes para garantir que está acordado.
 
 ## Cuidados
 
-- **Disco não é persistente**: tudo que fica em arquivo some a cada deploy/reinício. O histórico do IoB vai para um
-  Postgres externo (H3, `DATABASE_URL`).
+- **Disco não é persistente**: tudo que fica em arquivo some a cada deploy/reinício. Por isso o histórico do IoB
+  fica no Postgres externo (seção acima). Sem `DATABASE_URL` ele vive só na memória até o próximo reinício.
 - **Cota do Blynk**: o Render e o PC local ao vivo com o mesmo token somam requisições. Com os dois abertos ao mesmo
   tempo, deixar um deles em modo demonstração (`DEMO=true`).
 - Só uma placa pode usar o token; vários servidores podem (API externa).
