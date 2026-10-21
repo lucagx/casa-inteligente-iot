@@ -1357,7 +1357,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     door: 0, doorT: 0,
     win: 0, winT: 0,
     alarm: 0, alarmT: 0, armed: false,
-    presence: 0, presenceT: 0,
+    presence: 0, presenceT: 0, presenceHold: 0, // B5: holograma fica no mínimo 3 s depois de cada detecção
     gap: 6, gapT: 6, carSpeed: 0, dist: NaN,
     online: false, pulse: 0,
     night: 0,
@@ -1446,6 +1446,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     S.winT = v.V7 === 'ABERTA' ? 1 : 0;
     S.armed = v.V9 === '1';
     S.alarmT = /ATIVO/i.test(v.V8 || '') ? 1 : 0;
+    if (v.V11 === '1' && S.presenceT === 0) S.presenceHold = performance.now() + 3000;
     S.presenceT = v.V11 === '1' ? 1 : 0;
     S.dist = v.V12 === undefined || v.V12 === '' ? NaN : Number(v.V12);
     S.gapT = distToGap(S.dist);
@@ -1519,7 +1520,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     }
 
     // presença
-    S.presence = damp(S.presence, S.presenceT, 4, dt);
+    S.presence = damp(S.presence, S.presenceT || performance.now() < S.presenceHold ? 1 : 0, 4, dt);
     holo.visible = S.presence > 0.01;
     holoMat.uniforms.uOpacity.value = S.presence;
     holoMat.uniforms.uTime.value = t;

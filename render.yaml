@@ -18,6 +18,9 @@ services:
         value: "24"
       - key: POLL_INTERVAL_MS
         value: "1200"
+      # presença (V11) lida à parte, só com página aberta: PIR na tela em < 1 s (0 desliga)
+      - key: PRESENCA_POLL_MS
+        value: "500"
       - key: PAINEL_USUARIO
         value: casa
       # horário do Brasil para o histórico (mapa de presença por hora, rotina, consumo por dia)

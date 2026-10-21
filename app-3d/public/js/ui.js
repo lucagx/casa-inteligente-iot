@@ -59,7 +59,7 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     <div class="sensor big" id="sTemp">${svg('temp')}<div><div class="k">Temperatura <span class="hw">DHT11 · D2 · V4</span></div><div class="v"><span id="vTemp">--</span><small>°C</small></div><div class="bar"><i id="bTemp"></i></div></div></div>
     <div class="sensor" id="sUmid">${svg('drop')}<div><div class="k">Umidade <span class="hw">DHT11 · V5</span></div><div class="v sm"><span id="vUmid">--</span><small>%</small></div></div></div>
     <div class="sensor" id="sLuz"><span id="icLuz">${svg('sun')}</span><div><div class="k">Luminosidade <span class="hw">LDR · A0 · V10</span></div><div class="v sm"><span id="vLuz">--</span><small>%</small></div><div class="bar"><i id="bLuz"></i></div></div></div>
-    <div class="sensor" id="sPres">${svg('radar')}<div><div class="k">Presença <span class="hw">PIR · D5 · V11</span></div><div class="v sm" id="vPres">--</div></div></div>
+    <div class="sensor" id="sPres">${svg('radar')}<div><div class="k">Presença <span class="hw">PIR · D5 · V11</span></div><div class="v sm" id="vPres">--</div><div class="psub" id="vPresAt"></div></div></div>
     <div class="sensor" id="sCar">${svg('car')}<div><div class="k">Garagem <span class="hw">HC-SR04 · D4/D6 · V12</span></div><div class="v sm"><span id="vCar">--</span><small id="uCar">cm</small></div><div class="bar"><i id="bCar"></i></div></div></div>`;
 
   // ---------- dispositivos ----------
@@ -79,7 +79,7 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     const b = e.target.closest('button[data-room]');
     if (!b) return;
     const k = b.dataset.room;
-    recentCmd[k] = Date.now();
+    recentCmd[k] = recentCmd.V0 = recentCmd.V3 = Date.now(); // o cômodo pode mexer na luz geral (D1) e no modo
     try {
       const r = await fetch('/api/room', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ room: k, level: Number(meta.rooms?.[k]) > 0 ? 0 : 100 }) });
       const j = await r.json();
@@ -265,6 +265,7 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     $('#icLuz').innerHTML = svg(v.V6 === 'ESCURO' ? 'moon' : 'sun');
     const pres = v.V11 === '1';
     $('#vPres').textContent = fmt.pres(v.V11);
+    $('#vPresAt').textContent = fmt.presInfo(v.V14, meta.presenceAt);
     $('#sPres').classList.toggle('alert', pres);
 
     const auto = v.V3 === '1';
@@ -346,11 +347,18 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     const ORIGEM = { painel: 'pelo celular', casa3d: 'pela casa 3D', blynk: 'pelo Blynk' };
     if (!first && s.scene && s.scene.id !== prevScene?.id) event(`Cena ${s.scene.nome} iniciada ${ORIGEM[s.scene.origem] || ''}`, 'cyan');
     if (!first && changed) describe(prev, values);
-    if (!first) for (const [k, n] of ROOMS) {
-      const a = Number(prevRooms?.[k]) || 0, b = Number(s.rooms?.[k]) || 0;
-      if (a === b) continue;
-      const who = s.scene ? `cena ${s.scene.nome}` : Date.now() - (recentCmd[k] || 0) < 4000 ? 'pelo painel' : 'pelo celular';
-      event(`${b === 0 ? 'Luz apagada' : b >= 100 ? 'Luz acesa' : `Luz a ${b}%`} — ${n.toLowerCase()} (${who})`, b ? 'amber' : '');
+    if (!first) {
+      const mud = ROOMS.map(([k, n]) => [n, Number(prevRooms?.[k]) || 0, Number(s.rooms?.[k]) || 0]).filter(([, a, b]) => a !== b);
+      // a luz geral (D1) mudou junto: os cômodos seguiram ela — um evento só, com a origem certa
+      const viaGeral = prev.V0 !== values.V0;
+      const who = (k) => (s.scene ? `cena ${s.scene.nome}` : viaGeral ? (values.V3 === '1' ? 'automático, pela luz geral' : 'pela luz geral')
+        : Date.now() - (recentCmd[k] || 0) < 4000 ? 'pelo painel' : 'pelo celular');
+      const txt = (b) => (b === 0 ? 'apagada' : b >= 100 ? 'acesa' : `a ${b}%`);
+      if (viaGeral && !s.scene && mud.length > 1 && mud.every(([, , b]) => b === mud[0][2])) {
+        event(`Cômodos com luz ${txt(mud[0][2])} (${who()})`, mud[0][2] ? 'amber' : '');
+      } else {
+        for (const [n, , b] of mud) event(`Luz ${txt(b)} — ${n.toLowerCase()} (${who(n.toLowerCase())})`, b ? 'amber' : '');
+      }
     }
     if (!first && prevScene && !s.scene) event(`Cena ${prevScene.nome} concluída`, 'cyan');
     renderScenes();
@@ -590,6 +598,7 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
       if (!lastStateAt) return;
       const s = Math.round((Date.now() - lastStateAt) / 1000);
       chipAge.querySelector('span').textContent = s < 2 ? 'sincronizado agora' : `última leitura há ${s}s`;
+      $('#vPresAt').textContent = fmt.presInfo(values.V14, meta.presenceAt); // "há X s" anda sozinho
     },
   };
 }

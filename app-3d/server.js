@@ -19,6 +19,7 @@
  *                    (Basic Auth; usuário em PAINEL_USUARIO, padrão "casa"). Sem ela fica aberto (dev).
  * DATABASE_URL     : Postgres do histórico (server/history.js). Sem ela, o histórico fica em memória.
  *                    Rotas GET /api/history e GET /api/events; HISTORICO_POLL_MS = consulta de fundo.
+ * PRESENCA_POLL_MS : leitura rápida só do V11 (padrão 500 ms) enquanto há página aberta (B5); 0 desliga.
  *
  * MODO AO VIVO     : BLYNK_TOKEN configurado no .env. O servidor lê os pinos
  *                    virtuais do seu dispositivo e envia cada mudança para a
@@ -39,6 +40,8 @@ const PORT = Number(process.env.PORT || 3000);
 const TOKEN = (process.env.BLYNK_TOKEN || "").trim();
 const SERVER = (process.env.BLYNK_SERVER || "blynk.cloud").trim();
 const POLL_MS = Math.max(800, Number(process.env.POLL_INTERVAL_MS || 1200));
+// B5: leitura rápida só do V11 (presença) enquanto há página aberta; 0 desliga. Cada leitura é 1 requisição ao Blynk
+const PRESENCA_POLL_MS = Number(process.env.PRESENCA_POLL_MS ?? 500);
 const HAS_TOKEN = TOKEN && !TOKEN.startsWith("cole_aqui");
 const MODE = process.env.DEMO === "true" || !HAS_TOKEN ? "demo" : "live";
 
@@ -115,6 +118,7 @@ let state = {
   ts: Date.now(),
   readAt: null, // hora da última leitura bem-sucedida dos sensores (ts muda a cada batimento)
   scene: null, // cena em andamento (I4): { id, nome, origem, passo, total } ou null
+  presenceAt: null, // B5: hora (ms) da última detecção do PIR — "última detecção há X s" na tela
   // luzes por cômodo, nível 0–100. O LED do D1 (V0) é a luz geral: aceso enquanto algum cômodo estiver aceso
   rooms: { sala: 0, cozinha: 0, quarto: 0, externa: 0 },
   // no modo ao vivo começa vazio: a página mostra "--" até a primeira leitura real
@@ -130,6 +134,7 @@ const clients = new Set();
 
 function broadcast() {
   syncLuzes(); // luz geral (D1) x cômodos — ver "Luzes por cômodo" abaixo
+  marcarPresenca();
   state.ts = Date.now();
   const payload = `event: state\ndata: ${JSON.stringify(state)}\n\n`;
   for (const res of clients) res.write(payload);
@@ -190,6 +195,46 @@ async function blynkGet(pins) {
 // pinos que de fato existem no Blynk: um datastream que falta (ex.: V14 antes de criar no Console)
 // derruba a leitura em lote; depois da 1ª leitura pino a pino só os que responderam continuam
 let pinosAtivos = PINS;
+
+// B5: hora da última detecção = borda de subida do V11 (0 → 1)
+let ultimoV11;
+function marcarPresenca() {
+  const v = state.values.V11;
+  if (v === "1" && ultimoV11 !== undefined && ultimoV11 !== "1") state.presenceAt = Date.now();
+  ultimoV11 = v;
+}
+
+// B5: depois de um comando a placa leva um tempo para aplicar (servo ~0,7 s + repasse do Blynk). Uma leitura que
+// chegue antes disso traz o valor velho e a tela "voltava" (janela aberta → fechada logo depois do clique) — e o
+// histórico ganhava eventos falsos. Por até CONFIRMA_MS o valor lido daquele pino é ignorado até confirmar o comando;
+// se a placa recusar (ex.: estava no automático), depois do prazo vale o valor real.
+const CONFIRMA_MS = 3000;
+const ESTADO_DE = { V2: "V7" }; // comando → pino onde a placa devolve o estado
+const aguardando = {}; // pino de estado → { valor, ate }
+function esperarConfirmacao(pin, value) {
+  const valor = pin === "V2" ? (String(value) === "1" ? "ABERTA" : "FECHADA") : String(value);
+  aguardando[ESTADO_DE[pin] || pin] = { valor, ate: Date.now() + CONFIRMA_MS };
+}
+function filtrarLeitura(vals) {
+  const agora = Date.now();
+  for (const [pin, a] of Object.entries(aguardando)) {
+    if (!(pin in vals)) continue;
+    if (String(vals[pin]) === a.valor || agora > a.ate) delete aguardando[pin];
+    else delete vals[pin];
+  }
+  return vals;
+}
+
+// B5: só o V11, bem mais leve que a leitura geral; não roda duas ao mesmo tempo
+let lendoPresenca = false;
+async function pollPresenca() {
+  if (lendoPresenca) return;
+  lendoPresenca = true;
+  try {
+    if (setValues(filtrarLeitura(await blynkGet(["V11"])))) broadcast();
+  } catch { /* a leitura geral cuida do erro */ }
+  lendoPresenca = false;
+}
 async function pollBlynk() {
   try {
     let vals;
@@ -208,7 +253,7 @@ async function pollBlynk() {
         pinosAtivos = ok;
       }
     }
-    const changed = setValues(vals);
+    const changed = setValues(filtrarLeitura(vals));
     state.readAt = Date.now();
     const wasOnline = state.blynkOnline;
     state.blynkOnline = true;
@@ -325,18 +370,9 @@ app.get("/api/stream", (req, res) => {
 app.post("/api/command", async (req, res) => {
   const { pin, value } = req.body || {};
   if (!WRITABLE.has(pin)) return res.status(400).json({ ok: false, error: `Pino ${pin} não aceita comando.` });
-  historico.comando(pin); // as mudanças que vierem deste comando ficam com origem "painel"
   try {
-    if (MODE === "demo") {
-      simCommand(pin, value);
-    } else {
-      await blynkUpdate(pin, value);
-      // reflete na hora; a próxima leitura do Blynk confirma o valor real
-      if (pin === "V2") setValues({ V7: String(value) === "1" ? "ABERTA" : "FECHADA" });
-      else setValues({ [pin]: value });
-      broadcast();
-      setTimeout(pollBlynk, 400);
-    }
+    await comandar(pin, value); // origem "painel" no histórico
+    if (MODE === "live") setTimeout(pollBlynk, 400); // confirma o valor real (ver esperarConfirmacao)
     res.json({ ok: true });
   } catch (err) {
     res.status(502).json({ ok: false, error: err.message });
@@ -354,6 +390,8 @@ async function comandar(pin, value, origem = "painel") {
   historico.comando(pin, origem);
   if (MODE === "demo") return simCommand(pin, value);
   await blynkUpdate(pin, value);
+  esperarConfirmacao(pin, value);
+  // reflete na hora; a leitura do Blynk só vale de novo quando confirmar (ou depois de CONFIRMA_MS)
   if (pin === "V2") setValues({ V7: String(value) === "1" ? "ABERTA" : "FECHADA" });
   else setValues({ [pin]: value });
   broadcast();
@@ -492,6 +530,7 @@ if (MODE === "live") {
   // para economizar a cota de requisições do plano gratuito
   setInterval(() => clients.size && pollBlynk(), POLL_MS);
   setInterval(() => clients.size && pollDevice(), 5000);
+  if (PRESENCA_POLL_MS > 0) setInterval(() => clients.size && pollPresenca(), Math.max(300, PRESENCA_POLL_MS));
   if (HIST_POLL_MS > 0) setInterval(() => !clients.size && pollBlynk(), Math.max(POLL_MS, HIST_POLL_MS));
   pollBlynk();
   pollDevice();
@@ -509,7 +548,11 @@ if (MODE === "live") {
 // batimento: mantém a página informada de que o elo está vivo
 setInterval(() => clients.size && broadcast(), 3000);
 
-historico.iniciar().catch((err) => console.warn(`[historico] ao iniciar: ${err.message}`));
+historico.iniciar()
+  // B5: ao reiniciar, a "última detecção" vem do histórico (senão a tela ficaria sem ela até o próximo movimento)
+  .then(() => historico.eventos({ desde: Date.now() - 7 * DIA_MS, ate: Date.now(), tipos: ["presenca"], limite: 1 }))
+  .then((r) => { const ts = r?.eventos?.[0]?.ts; if (ts && !state.presenceAt) state.presenceAt = ts; })
+  .catch((err) => console.warn(`[historico] ao iniciar: ${err.message}`));
 // o Render manda SIGTERM a cada deploy: grava o que estiver na fila antes de sair
 for (const sinal of ["SIGTERM", "SIGINT"]) {
   process.once(sinal, () => historico.fechar().catch(() => {}).finally(() => process.exit(0)));

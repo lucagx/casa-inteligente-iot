@@ -38,6 +38,7 @@ e o servidor não lê nem simula V6/V10/V12. O código continua: `SENSORES=ldr,g
 |---|---|
 | `BLYNK_TOKEN`, `BLYNK_SERVER` | Liga ao Blynk (sem token = modo demonstração) |
 | `POLL_INTERVAL_MS` | Intervalo de leitura do Blynk (mínimo 800 ms) |
+| `PRESENCA_POLL_MS` | Leitura rápida só da presença (V11) com página aberta (padrão 500 ms, mínimo 300; `0` desliga). PIR na tela em < 1 s; custa 1 requisição ao Blynk a cada leitura |
 | `DEMO` | `true` força o modo demonstração |
 | `SENSORES` | Sensores opcionais presentes: `ldr`, `garagem` (vírgula). Vazio = nenhum |
 | `PAINEL_SENHA` / `PAINEL_USUARIO` | Senha do painel (Basic Auth, usuário padrão `casa`). Obrigatória antes de publicar: o link controla luz, porta e alarme. Vazia = aberto (dev). `/healthz` fica sempre aberto, sem dados, para o health check |
@@ -212,4 +213,11 @@ e a fila é gravada quando o banco volta. As cenas (I4) já registram: cada coma
 - O plano gratuito do Blynk tem limite de mensagens/requisições. O firmware só publica
   quando um valor muda e o servidor só consulta o Blynk no ritmo rápido enquanto a página está aberta;
   sem página, uma consulta a cada `HISTORICO_POLL_MS` (60 s) mantém o histórico (`0` desliga).
+  Com página aberta, a presença tem leitura própria (`PRESENCA_POLL_MS`): ~2 requisições/s a mais. Se a cota
+  apertar, subir para 1000 ou usar `0` (a presença volta a chegar junto com a leitura geral).
+- Depois de um comando, a leitura do Blynk daquele pino é ignorada por até 3 s até a placa confirmar
+  (o servo leva ~0,7 s; antes a tela mostrava a janela abrindo e voltando a fechada). Se a placa recusar
+  o comando (ex.: estava no automático), depois do prazo vale o valor real.
+- Presença na tela: "N detecções hoje · última há X s" (a última vem do histórico ao reiniciar) e o
+  holograma da entrada fica no mínimo 3 s a cada detecção, mesmo num pulso curto do PIR.
 - three.js e as fontes são servidos localmente: a parte visual funciona sem internet.

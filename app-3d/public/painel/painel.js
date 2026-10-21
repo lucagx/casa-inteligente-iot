@@ -200,10 +200,10 @@ function render() {
   const pres = v.V11 === '1';
   $('#vPres').textContent = fmt.pres(v.V11);
   $('#sPres').classList.toggle('alert', pres);
-  // V14 só existe com o datastream criado no Blynk (firmware 1.2.0)
-  const det = v.V14 === undefined || v.V14 === '' ? NaN : Number(v.V14);
-  $('#vDet').hidden = !Number.isFinite(det);
-  $('#vDet').textContent = `${det} ${det === 1 ? 'detecção' : 'detecções'} hoje`;
+  // detecções do dia (V14, se o datastream existir) + "última há X s" (B5)
+  const info = fmt.presInfo(v.V14, meta.presenceAt);
+  $('#vDet').hidden = !info;
+  $('#vDet').textContent = info;
   if (SENSORES.ldr) {
     const luz = Number(v.V10);
     $('#vLuz').textContent = Number.isFinite(luz) && v.V10 !== undefined ? Math.round(luz) : v.V6 || '--';
@@ -271,6 +271,8 @@ function render() {
 
 // idade da leitura (o servidor manda um batimento a cada 3 s; sem ele por 8 s, o elo caiu)
 function tick() {
+  const info = fmt.presInfo(values.V14, meta.presenceAt);
+  if (info) $('#vDet').textContent = info; // "há X s" anda sozinho
   const s = Math.round((Date.now() - lastStateAt) / 1000);
   chipAge.querySelector('span').textContent = !lastStateAt ? 'aguardando dados'
     : s > 8 ? `sem sinal há ${s}s`
