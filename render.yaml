@@ -20,10 +20,17 @@ services:
         value: "1200"
       - key: PAINEL_USUARIO
         value: casa
+      # horário do Brasil para o histórico (mapa de presença por hora, rotina, consumo por dia)
+      - key: TZ
+        value: America/Sao_Paulo
+      - key: HISTORICO_POLL_MS
+        value: "60000"
       # segredos: preenchidos no painel do Render, nunca no repositório
       - key: BLYNK_TOKEN
         sync: false
       - key: BLYNK_SERVER
         sync: false
       - key: PAINEL_SENHA
+        sync: false
+      - key: DATABASE_URL
         sync: false
