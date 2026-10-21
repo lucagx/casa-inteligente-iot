@@ -100,6 +100,10 @@ CREATE TABLE IF NOT EXISTS eventos (
   detalhe text
 );
 CREATE INDEX IF NOT EXISTS eventos_ts ON eventos (ts);
+-- no Supabase o schema public também sai pela API REST (chave anon): com RLS ligado e sem políticas,
+-- ninguém lê por lá; o servidor conecta como dono das tabelas e não é afetado
+ALTER TABLE leituras ENABLE ROW LEVEL SECURITY;
+ALTER TABLE eventos ENABLE ROW LEVEL SECURITY;
 `;
 const MS = "(extract(epoch FROM ts) * 1000)::float8 AS ts";
 
@@ -301,9 +305,11 @@ function criarHistorico({ url, demo, valores, lidoEm }) {
   const comandos = new Map(); // pino → { ts, origem } do último comando
   const ouvintes = new Set();
   const timers = [];
-  let pronto = false, gravando = false, falhou = false, ultimaAmostra = 0;
+  let pronto = false, gravando = false, falhou = false, ultimaAmostra = 0, ultimoTs = 0;
+  // relógio que nunca repete: duas mudanças no mesmo milissegundo saem em ordem do banco (empate no ts não tem ordem)
+  const relogio = () => (ultimoTs = Math.max(Date.now(), ultimoTs + 1));
 
-  function evento(tipo, origem, detalhe, ts = Date.now()) {
+  function evento(tipo, origem, detalhe, ts = relogio()) {
     const e = { ts, tipo, origem, detalhe };
     fila.eventos.push(e);
     for (const f of ouvintes) f(e);
@@ -320,7 +326,7 @@ function criarHistorico({ url, demo, valores, lidoEm }) {
 
   /** Chamado pelo servidor a cada mudança de estado: `mudou` = pinos novos, `antes` = valores anteriores. */
   function registrar(mudou, antes) {
-    const agora = Date.now(), v = valores();
+    const agora = relogio(), v = valores();
     for (const [pino, valor] of Object.entries(mudou)) {
       if (!AMOSTRADOS.includes(pino)) fila.leituras.push({ ts: agora, pino, valor });
       // primeira leitura de um pino (ex.: logo após iniciar) só grava o valor, sem evento
@@ -336,7 +342,7 @@ function criarHistorico({ url, demo, valores, lidoEm }) {
   }
 
   function amostrar() {
-    const agora = Date.now(), lido = lidoEm();
+    const agora = relogio(), lido = lidoEm();
     // só com leitura recente: sem página aberta e sem consulta de fundo o valor estaria velho
     if (agora - ultimaAmostra < AMOSTRA_MS || !lido || agora - lido > AMOSTRA_MS) return;
     const v = valores();

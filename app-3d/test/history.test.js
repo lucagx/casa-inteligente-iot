@@ -102,6 +102,16 @@ test("eventos filtram por tipo, respeitam o limite e vêm do mais novo ao mais a
   assert.deepEqual(r.eventos.map((e) => e.detalhe), ["n4", "n3", "n2"]);
 });
 
+test("mudanças no mesmo milissegundo ganham ts crescente (ordem certa no Postgres)", async () => {
+  const { h, set } = novo();
+  set({ V7: "FECHADA" });
+  set({ V7: "ABERTA" });
+  set({ V7: "FECHADA" });
+  const ts = (await h.leituras({ ...agora(), pinos: ["V7"] })).pinos.V7.map((x) => x[0]);
+  assert.equal(ts.length, 3);
+  assert.ok(ts[0] < ts[1] && ts[1] < ts[2], JSON.stringify(ts));
+});
+
 test("aoEvento avisa cada evento novo (stream)", async () => {
   const { h, set } = novo({ V11: "0" });
   const vistos = [];
