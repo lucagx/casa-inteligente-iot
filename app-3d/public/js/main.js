@@ -108,6 +108,17 @@ const gtao = new GTAOPass(scene, camera, W(), H());
 gtao.blendIntensity = 0.85;
 gtao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.6, thickness: 1.2, scale: 1.1, samples: 12 });
 gtao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
+// brilhos aditivos (sprites e planos de luz, userData.semAO) não são superfícies: o GTAO só esconde pontos e linhas
+// no passe de profundidade/normais, e eles viravam quadrados escuros em volta dos balizadores (three r186)
+{
+  const esconder = gtao._overrideVisibility.bind(gtao);
+  gtao._overrideVisibility = function () {
+    esconder();
+    this.scene.traverse((o) => {
+      if ((o.isSprite || o.userData.semAO) && o.visible) { o.visible = false; this._visibilityCache.push(o); }
+    });
+  };
+}
 composer.addPass(gtao);
 const bloom = new UnrealBloomPass(new THREE.Vector2(W(), H()), 0.4, 0.55, 0.88);
 composer.addPass(bloom);

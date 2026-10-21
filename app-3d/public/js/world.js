@@ -107,6 +107,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   M.downlight = warmEmissive();
   M.bollard = warmEmissive();
   M.poolLight = std({ color: 0xbff4ff, emissive: 0x3fd8ff, emissiveIntensity: 0 });
+  M.uplight = warmEmissive(); // V2: spots de chão, réguas da fachada e fita sob o deck
   M.windowGlow = std({ color: 0x000000, emissive: 0xffb866, emissiveIntensity: 0, transparent: true, opacity: 0.0, depthWrite: false });
 
   // ================================================================
@@ -323,6 +324,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   const lightMats = [
     [M.bulb, 1.0, 2.0, 'sala'], [M.ledStrip, 0.5, 0.9, 'sala'], [M.bulbCozinha, 1.0, 2.0, 'cozinha'],
     [M.bulbQuarto, 1.0, 2.0, 'quarto'], [M.downlight, 0.5, 0.9, 'externa'], [M.bollard, 0.6, 1.2, 'externa'],
+    [M.uplight, 0.4, 1.1, 'externa'],
   ];
   // "Poças de luz": círculos aditivos no chão que imitam o facho de um spot sem custo de luz real
   const poolTex = (() => {
@@ -334,14 +336,69 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     g.fillStyle = grd; g.fillRect(0, 0, 128, 128);
     const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
   })();
-  const lightPools = []; // { mat, base, zone }
+  const lightPools = []; // { mat, base, zone, noite }
+  // V2: cáusticas — soma de ondas, sem pow/normalize (NaN apaga a tela com o bloom); l fica sempre em 0..1
+  const causticMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uOpacity: { value: 0 }, uColor: { value: new THREE.Color(0x9ff4ff) } },
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `uniform float uTime; uniform float uOpacity; uniform vec3 uColor; varying vec2 vUv;
+      void main(){
+        vec2 p = vUv * vec2(9.0, 4.5);
+        float v = sin(p.x * 3.1 + uTime * 1.3 + sin(p.y * 2.3 + uTime * 0.9))
+                + sin(p.y * 3.7 - uTime * 1.1 + sin(p.x * 2.9 - uTime * 0.7))
+                + sin((p.x + p.y) * 2.6 + uTime * 0.8);
+        float l = clamp(1.0 - abs(v / 3.0), 0.0, 1.0);
+        l = l * l * l * l;
+        vec2 e = min(vUv, 1.0 - vUv);
+        float borda = clamp(min(e.x * 8.0, e.y * 4.0), 0.0, 1.0);
+        gl_FragColor = vec4(uColor * (0.1 + l * 0.9) * borda * uOpacity, 1.0);
+      }`,
+  });
   function lightPool(color, x, y, z, rx, rz = rx, base = 0.55, zone = 'sala') {
     const mat = new THREE.MeshBasicMaterial({ map: poolTex, color, transparent: true, opacity: 0, depthWrite: false,
       blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -4, toneMapped: true });
     const m = new THREE.Mesh(new THREE.PlaneGeometry(rx * 2, rz * 2), mat);
-    m.rotation.x = -Math.PI / 2; m.position.set(x, y, z); m.renderOrder = 2;
+    m.rotation.x = -Math.PI / 2; m.position.set(x, y, z); m.renderOrder = 2; m.userData.semAO = true;
     root.add(m);
     lightPools.push({ mat, base, zone });
+  }
+  // ---------- V2: iluminação noturna (tudo aditivo/emissivo, sem luz nova) ----------
+  // brilho em faixa: forte embaixo, some para cima e nas laterais (luz rasante, fita de LED, paredes da piscina)
+  const washTex = (() => {
+    const c = document.createElement('canvas'); c.width = 64; c.height = 128;
+    const g = c.getContext('2d');
+    const v = g.createLinearGradient(0, 128, 0, 0);
+    v.addColorStop(0, 'rgba(255,255,255,1)'); v.addColorStop(0.25, 'rgba(255,255,255,0.55)');
+    v.addColorStop(0.6, 'rgba(255,255,255,0.15)'); v.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = v; g.fillRect(0, 0, 64, 128);
+    g.globalCompositeOperation = 'destination-in';
+    const h = g.createLinearGradient(0, 0, 64, 0);
+    h.addColorStop(0, 'rgba(0,0,0,0)'); h.addColorStop(0.15, 'rgba(0,0,0,1)'); h.addColorStop(0.85, 'rgba(0,0,0,1)'); h.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = h; g.fillRect(0, 0, 64, 128);
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+  })();
+  // vários planos com o mesmo brilho num só desenho (transparente não entra no mergeStatic).
+  // quad: { w, h, x, y, z, chao (deitado), inv (deitado com o lado forte para -z), ry }
+  // noite: só aparece à noite (brilho de jardim/fachada de dia não faz sentido)
+  function glowBatch(map, color, quads, base, zone = 'externa', noite = true) {
+    const geo = mergeGeometries(quads.map((q) => {
+      const g = new THREE.PlaneGeometry(q.w, q.h);
+      if (q.chao) g.rotateX(q.inv ? Math.PI / 2 : -Math.PI / 2);
+      if (q.ry) g.rotateY(q.ry);
+      return g.translate(q.x, q.y, q.z);
+    }));
+    const mat = new THREE.MeshBasicMaterial({ map, color, transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -4, toneMapped: true, side: THREE.DoubleSide });
+    const m = new THREE.Mesh(geo, mat); m.renderOrder = 2; m.userData.semAO = true; // fora do AO (main.js)
+    root.add(m);
+    lightPools.push({ mat, base, zone, noite });
+  }
+  // halos que sempre olham para a câmera (sprites com um só material)
+  function halos(color, pts, base, zone = 'externa') {
+    const mat = new THREE.SpriteMaterial({ map: poolTex, color, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+    for (const [x, y, z, size] of pts) { const sp = new THREE.Sprite(mat); sp.position.set(x, y, z); sp.scale.setScalar(size); sp.renderOrder = 3; root.add(sp); }
+    lightPools.push({ mat, base, zone, noite: true });
   }
   const pointLights = []; // { light, base, zone }
   // Luzes pontuais custam em TODO pixel de TODO material padrão, mesmo apagadas,
@@ -897,6 +954,17 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     pl.position.set(px, -0.45, pz - pd / 2 + wt + 0.011);
     root.add(pl);
     lightPool(0x46dcff, px, yF + 0.012, pz, pw * 0.5, pd * 0.55, 0.45, 'externa');
+    // V2: cáusticas animadas no fundo — de dia pelo sol, à noite pela luminária (cômodo externa)
+    const caus = new THREE.Mesh(new THREE.PlaneGeometry(pw - wt * 2, pd - wt * 2), causticMat);
+    caus.rotation.x = -Math.PI / 2; caus.position.set(px, yF + 0.02, pz); caus.renderOrder = 2; caus.userData.semAO = true;
+    root.add(caus);
+    // V2: brilho subaquático ciano — as paredes clareiam de baixo para cima
+    glowBatch(washTex, 0x46dcff, [
+      { w: pw - wt * 2, h: wallH, x: px, y: yF + wallH / 2, z: pz - pd / 2 + wt + 0.01 },
+      { w: pw - wt * 2, h: wallH, x: px, y: yF + wallH / 2, z: pz + pd / 2 - wt - 0.01 },
+      { w: pd - wt * 2, h: wallH, x: px - pw / 2 + wt + 0.01, y: yF + wallH / 2, z: pz, ry: Math.PI / 2 },
+      { w: pd - wt * 2, h: wallH, x: px + pw / 2 - wt - 0.01, y: yF + wallH / 2, z: pz, ry: Math.PI / 2 },
+    ], 0.35);
     // escada de aço na ponta leste: dá a escala da profundidade
     {
       const lx = px + pw / 2 - wt - 0.1, ox = px + pw / 2 + 0.25;
@@ -925,6 +993,29 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     head.position.set(x, 0.55, z);
     root.add(head);
     bollards.push(head);
+  }
+  // V2: halo em volta da cabeça e círculo de luz no chão de cada balizador
+  {
+    const B = [[1.9, 5.6], [4.1, 5.6], [1.9, 8.2], [4.1, 8.2], [1.9, 10.8], [4.1, 10.8]];
+    halos(0xffc98a, B.map(([x, z]) => [x, 0.56, z, 0.55]), 0.55);
+    glowBatch(poolTex, 0xffc27a, B.map(([x, z]) => ({ w: 1.3, h: 1.3, x, y: 0.015, z, chao: true })), 0.5);
+  }
+  // V2: luz rasante na fachada da entrada (régua no pé da parede, brilho subindo; o vão da porta fica de fora)
+  {
+    const zf = 3.625 + 0.012, hw = 2.6;
+    const faixas = [[1.5, 2.4], [3.6, 6.0]];
+    glowBatch(washTex, 0xffc89a, faixas.map(([a, b]) => ({ w: b - a, h: hw, x: (a + b) / 2, y: FL + hw / 2, z: zf })), 0.55);
+    for (const [a, b] of faixas) box(root, b - a - 0.1, 0.035, 0.05, M.uplight, (a + b) / 2, FL + 0.02, zf + 0.02, { cast: false });
+  }
+  // V2: fita de LED sob a borda do deck (sul e oeste) e o brilho dela na grama
+  {
+    const x0 = -6.6, x1 = 1.8, z0 = 3.9, z1 = 6.8, y = 0.045;
+    box(root, x1 - x0, 0.015, 0.015, M.uplight, (x0 + x1) / 2, y, z1 + 0.005, { cast: false });
+    box(root, 0.015, 0.015, z1 - z0, M.uplight, x0 - 0.005, y, (z0 + z1) / 2, { cast: false });
+    glowBatch(washTex, 0xffc27a, [
+      { w: x1 - x0, h: 0.5, x: (x0 + x1) / 2, y: 0.012, z: z1 + 0.25, chao: true, inv: true },
+      { w: z1 - z0, h: 0.5, x: x0 - 0.25, y: 0.012, z: (z0 + z1) / 2, chao: true, inv: true, ry: Math.PI / 2 },
+    ], 0.6);
   }
 
   // carro elétrico — entra de frente na garagem; a posição vem do HC-SR04 (V12)
@@ -1073,8 +1164,14 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     root.add(g);
     trees.push({ crown, phase: seed * 1.7 });
   }
-  tree(-12.2, -7.0, 1.15, 1); tree(-13.0, 2.8, 0.95, 2); tree(12.6, -8.2, 1.2, 3);
-  tree(14.0, -2.5, 1.0, 4); tree(-11.6, 9.6, 0.85, 5); tree(5.0, -9.9, 0.95, 6); tree(-2.0, -9.6, 1.05, 7); tree(14.2, 9.6, 0.7, 8);
+  const ARVORES = [[-12.2, -7.0, 1.15], [-13.0, 2.8, 0.95], [12.6, -8.2, 1.2], [14.0, -2.5, 1.0], [-11.6, 9.6, 0.85], [5.0, -9.9, 0.95], [-2.0, -9.6, 1.05], [14.2, 9.6, 0.7]];
+  ARVORES.forEach(([x, z, s], i) => tree(x, z, s, i + 1));
+  // V2: spot de chão em cada árvore — luminária no pé, círculo de luz e a copa clareada por baixo
+  {
+    for (const [x, z] of ARVORES) cyl(root, 0.07, 0.08, 0.06, M.uplight, x + 0.45, 0.03, z + 0.45, 12);
+    glowBatch(poolTex, 0xffc27a, ARVORES.map(([x, z, s]) => ({ w: 1.8 * s, h: 1.8 * s, x: x + 0.2, y: 0.015, z: z + 0.2, chao: true })), 0.45);
+    halos(0xffd2a0, ARVORES.map(([x, z, s]) => [x, 2.9 * s, z, 3.4 * s]), 0.16);
+  }
 
   // sebes e arbustos (instanciados)
   {
@@ -1478,7 +1575,10 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     for (const p of pointLights) p.light.intensity = p.base * Z[p.zone] * nightBoost;
     // lâmpadas/fitas: brilho contido à noite (antes chegava a 6,9 e o bloom "estourava")
     for (const [m, day, night, zone] of lightMats) m.emissiveIntensity = Z[zone] * (day + S.night * (night - day));
-    for (const lp of lightPools) lp.mat.opacity = lp.base * Z[lp.zone] * (0.15 + S.night * 0.85);
+    for (const lp of lightPools) lp.mat.opacity = lp.base * Z[lp.zone] * (lp.noite ? S.night : 0.15 + S.night * 0.85);
+    // cáusticas: sol de dia; à noite só com a luz externa (luminária da piscina)
+    causticMat.uniforms.uOpacity.value = 0.35 * (1 - S.night) + Z.externa * S.night * 0.7;
+    causticMat.uniforms.uTime.value = t;
     M.poolLight.emissiveIntensity = Z.externa * (0.3 + S.night * 0.3); // antes 2,8: virava uma estrela na água
     // relógio da TV: redesenha ao virar o minuto, mesmo sem estado novo
     if (Math.floor(Date.now() / 60000) !== tvMinute) drawTV();

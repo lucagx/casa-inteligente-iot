@@ -100,6 +100,11 @@ manual). No automático o firmware continua comandando o D1 pela presença, e os
 Os níveis dos cômodos ficam no servidor (`state.rooms`); cada um ainda não tem datastream próprio no Blynk
 (dá para criar depois, na K1). API: `POST /api/room {"room":"quarto","level":15}` (`"room":"todos"` = os quatro).
 
+**Luz externa à noite (V2):** o cômodo "externa" acende o jardim inteiro — spots do beiral, balizadores do caminho
+com halo e círculo de luz no chão, spot no pé de cada árvore, luz rasante na fachada da entrada, fita de LED sob o
+deck e a piscina com brilho ciano nas paredes e cáusticas animadas no fundo (de dia as cáusticas vêm do sol).
+Tudo é emissivo ou brilho aditivo (nenhuma luz nova); os brilhos ficam fora do AO do perfil alto (`userData.semAO`).
+
 ### Cenas de um toque
 
 Botões no painel do celular e na casa 3D que disparam vários comandos em sequência
