@@ -83,6 +83,38 @@ atuador com o modo automático ligado passa para o manual, como no painel da cas
 - Manifest, service worker e ícones (`/painel/manifest.webmanifest`, `/painel/sw.js`, `/painel/icones/`)
   ficam fora da senha porque o navegador os busca sem credenciais; não têm dados nem controlam nada.
 
+### Luzes por cômodo
+
+O LED do protoboard (**D1, V0**) é a **luz geral** da casa, e cada cômodo (**sala, cozinha, quarto, externa**)
+tem a sua luz na casa 3D, com nível 0–100 %. As duas coisas andam juntas, nos dois sentidos:
+
+- algum cômodo aceso ⇒ o D1 acende; o D1 só apaga quando **todos** os cômodos apagam;
+- ligar a luz geral (painel, casa 3D, app Blynk, botão ou regra do automático) ⇒ acende todos os cômodos;
+  desligar ⇒ apaga todos.
+
+Mexer num cômodo com o modo automático ligado passa para o manual (o firmware só aceita comando de luz no
+manual). No automático o firmware continua comandando o D1 pela presença, e os cômodos acompanham.
+Os níveis dos cômodos ficam no servidor (`state.rooms`); cada um ainda não tem datastream próprio no Blynk
+(dá para criar depois, na K1). API: `POST /api/room {"room":"quarto","level":15}` (`"room":"todos"` = os quatro).
+
+### Cenas de um toque
+
+Botões no painel do celular e na casa 3D que disparam vários comandos em sequência
+(definidas em `server/cenas.js`; toda cena começa passando para o manual, porque o firmware só aceita
+comando de atuador no modo manual):
+
+| Cena | Luzes (D1 aceso se alguma ficar acesa) | Porta, janela e alarme | Modo no fim |
+|---|---|---|---|
+| Cheguei | sala, cozinha e externa | desarma e destranca | manual |
+| Saí | só a externa (segurança) | tranca, **fecha a janela** e arma | manual |
+| Dormir | abajur do quarto a 15 %, externa a 40 % | tranca e arma; **a janela fica como está** (ventilação) | manual |
+| Apresentação | acende uma a uma | abre, destranca, arma e desarma, um passo a cada 1,5 s | automático, tudo apagado |
+
+As cenas que deixam luz acesa terminam no manual: no automático o firmware apagaria o D1 sem presença.
+Uma cena por vez: enquanto uma roda, as outras ficam travadas (a API responde 409). O andamento vai pelo
+stream (`state.scene`) e o feed da casa 3D marca cada mudança com "(cena …)".
+API: `GET /api/scenes` (lista) e `POST /api/scene {"nome":"sai","origem":"painel"}`.
+
 ## Usando na apresentação
 
 - **Câmeras** (barra inferior): Visão geral, Sala, Entrada, Janela, Garagem, Cobertura e Terreno.

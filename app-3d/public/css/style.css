@@ -337,6 +337,35 @@ body[data-layout="foco"] .feed { opacity: 0; pointer-events: none; }
 body[data-layout="foco"]::before { opacity: 0.4; }
 body[data-layout="foco"] .hud-data { gap: 12px; }
 
+/* ---------- luzes por cômodo (acendem o D1) ---------- */
+.rooms { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 2px; }
+.rlabel { width: 100%; font-size: 11.5px; color: var(--muted); }
+.rlabel em { font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--cyan); text-transform: uppercase; letter-spacing: 0.08em; }
+.room {
+  flex: 1 1 40%; display: inline-flex; align-items: center; gap: 6px; padding: 7px 9px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--stroke); background: var(--glass-2); font-size: 12px; transition: border-color .3s, background .3s;
+}
+.room .ico { width: 15px; height: 15px; color: var(--muted); }
+.room b { margin-left: auto; font-family: var(--mono); font-weight: 400; font-size: 10.5px; color: var(--faint); }
+.room.on { border-color: rgba(255, 194, 122, 0.5); background: rgba(255, 194, 122, 0.1); }
+.room.on .ico, .room.on b { color: var(--amber); }
+.room:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+/* ---------- cenas (I4) ---------- */
+.scenes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.scene {
+  position: relative; overflow: hidden; display: flex; align-items: center; gap: 9px; padding: 10px 12px;
+  border-radius: 12px; border: 1px solid var(--stroke); background: var(--glass-2); cursor: pointer; text-align: left;
+  transition: border-color .3s, background .3s, opacity .3s;
+}
+.scene:hover { border-color: rgba(255, 255, 255, 0.18); }
+.scene:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.scene .ico { color: var(--cyan); width: 18px; height: 18px; flex: none; }
+.sname { font-size: 12.5px; font-weight: 500; }
+.sprog { position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--cyan); transition: width .4s ease; }
+.scene.run { border-color: rgba(94, 231, 255, 0.55); background: rgba(94, 231, 255, 0.1); }
+.scene:disabled { opacity: 0.4; cursor: default; }
+
 /* ---------- alarme ---------- */
 .vignette {
   position: fixed; inset: 0; z-index: 3; pointer-events: none; opacity: 0; transition: opacity .4s;

@@ -21,11 +21,16 @@ const ICON = {
   lCompact: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
   lFocus: '<path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/><circle cx="12" cy="12" r="2.5"/>',
   auto: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="5"/>',
+  // cenas (o servidor manda o nome do ícone em /api/scenes)
+  chegar: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/>',
+  sair: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
+  lua: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+  play: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5z"/>',
 };
 const svg = (k, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>`;
 
 const DEVICES = [
-  { key: 'luz', pin: 'V0', write: 'V0', icon: 'bulb', name: 'Iluminação', hw: 'LED · D1 · V0', on: (v) => v.V0 === '1', label: (on) => (on ? 'Ligada' : 'Desligada') },
+  { key: 'luz', pin: 'V0', write: 'V0', icon: 'bulb', name: 'Luz geral', hw: 'LED · D1 · V0', on: (v) => v.V0 === '1', label: (on) => (on ? 'Ligada' : 'Desligada') },
   { key: 'porta', pin: 'V1', write: 'V1', icon: 'door', name: 'Porta', hw: 'LED trava · D0 · V1', on: (v) => v.V1 === '1', label: (on) => (on ? 'Destrancada' : 'Trancada') },
   { key: 'janela', pin: 'V7', write: 'V2', icon: 'window', name: 'Janela', hw: 'Servo SG90 · D7 · V2/V7', on: (v) => v.V7 === 'ABERTA', label: (on, v) => fmt.janela(v.V7) },
   { key: 'alarme', pin: 'V9', write: 'V9', icon: 'siren', name: 'Alarme', hw: 'Buzzer · D8 · V8/V9', on: (v) => v.V9 === '1', label: (on, v) => { const t = fmt.alarme(v.V8, v.V9); return t === 'Disparado' ? 'DISPARADO' : t; }, anyMode: true },
@@ -66,12 +71,29 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
       <span class="switch"><i></i></span>
     </button>`).join('');
 
+  // luzes por cômodo (state.rooms, nível 0–100): qualquer uma acesa mantém o LED do D1 (luz geral) aceso
+  const ROOMS = [['sala', 'Sala'], ['cozinha', 'Cozinha'], ['quarto', 'Quarto'], ['externa', 'Externa']];
+  $('#rooms').innerHTML = `<span class="rlabel">Cômodos <em>acendem o D1</em></span>` + ROOMS.map(([k, n]) =>
+    `<button type="button" class="room" id="room-${k}" data-room="${k}" aria-pressed="false">${svg('bulb')}<span>${n}</span><b id="rl-${k}">--</b></button>`).join('');
+  $('#rooms').addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-room]');
+    if (!b) return;
+    const k = b.dataset.room;
+    recentCmd[k] = Date.now();
+    try {
+      const r = await fetch('/api/room', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ room: k, level: Number(meta.rooms?.[k]) > 0 ? 0 : 100 }) });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || 'falha');
+    } catch (err) { toast(`Não foi possível mudar a luz: ${err.message}`, 'err'); }
+  });
+  const roomText = (lvl) => (lvl === 0 ? 'off' : lvl >= 100 ? 'on' : `${lvl}%`);
+
   const modeAuto = $('#modeAuto'), modeManual = $('#modeManual');
 
   // ---------- hotspots na cena ----------
   const hot = {}, hv = {}; // hv: texto de leitura de cada hotspot (ainda fora do DOM até o 1º quadro)
   const HOT = [
-    { key: 'luz', anchor: 'tv', title: 'Iluminação', act: true, dev: 'luz' },
+    { key: 'luz', anchor: 'tv', title: 'Luz geral · D1', act: true, dev: 'luz' },
     { key: 'porta', anchor: 'porta', title: 'Porta · trava', act: true, dev: 'porta' },
     { key: 'janela', anchor: 'janela', title: 'Janela · servo', act: true, dev: 'janela' },
     { key: 'alarme', anchor: 'alarme', title: 'Sirene · buzzer', act: true, dev: 'alarme' },
@@ -167,6 +189,38 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
   modeAuto.addEventListener('click', () => setMode(true));
   modeManual.addEventListener('click', () => setMode(false));
 
+  // ---------- cenas de um toque (I4) ----------
+  let scenes = [];
+  fetch('/api/scenes').then((r) => r.json()).then((list) => {
+    scenes = list;
+    $('#scenes').innerHTML = scenes.map((c) => `
+      <button class="scene" id="sc-${c.id}" type="button" data-scene="${c.id}" title="${c.descricao}">
+        ${svg(c.icone)}<span class="sname">${c.nome}</span><i class="sprog"></i>
+      </button>`).join('');
+    renderScenes();
+  }).catch(() => { /* servidor sem cenas: a seção fica vazia */ });
+  $('#scenes').addEventListener('click', async (e) => {
+    const b = e.target.closest('button[data-scene]');
+    if (!b || meta.scene) return;
+    try {
+      const r = await fetch('/api/scene', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome: b.dataset.scene, origem: 'casa3d' }) });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || 'falha');
+    } catch (err) {
+      toast(`Cena não iniciada: ${err.message}`, 'err');
+    }
+  });
+  function renderScenes() {
+    const s = meta.scene;
+    for (const c of scenes) {
+      const el = $(`#sc-${c.id}`);
+      const run = s?.id === c.id;
+      el.classList.toggle('run', run);
+      el.disabled = !!s && !run;
+      el.querySelector('.sprog').style.width = run ? `${Math.round((s.passo / s.total) * 100)}%` : '0';
+    }
+  }
+
   // ---------- simulação (modo demonstração) ----------
   const sim = $('#sim');
   const simTemp = $('#simTemp'), simLuz = $('#simLuz'), simDist = $('#simDist'), simPres = $('#simPres');
@@ -186,7 +240,7 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
 
   // ---------- render do estado ----------
   function describe(prev, v) {
-    const who = (pin) => (Date.now() - (recentCmd[pin] || 0) < 4000 ? 'pelo painel' : v.V3 === '1' ? 'automático' : 'no dispositivo');
+    const who = (pin) => (meta.scene ? `cena ${meta.scene.nome}` : Date.now() - (recentCmd[pin] || 0) < 4000 ? 'pelo painel' : v.V3 === '1' ? 'automático' : 'no dispositivo');
     if (prev.V0 !== v.V0) event(v.V0 === '1' ? `Luz ligada — LED do D1 aceso (${who('V0')})` : `Luz desligada — LED do D1 apagado (${who('V0')})`, 'amber');
     if (prev.V1 !== v.V1) event(v.V1 === '1' ? `Porta destrancada — LED do D0 aceso (${who('V1')})` : `Porta trancada — LED do D0 apagado (${who('V1')})`);
     if (prev.V7 !== v.V7 && v.V7) event(v.V7 === 'ABERTA' ? `Servo girou 90° — janela aberta (${who('V2')})` : `Servo voltou a 0° — janela fechada (${who('V2')})`);
@@ -243,6 +297,13 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     $('#hMode').classList.toggle('on', auto);
     for (const d of DEVICES) $(`#ha-${d.key}`).classList.toggle('on', d.on(v));
 
+    for (const [k] of ROOMS) {
+      const lvl = Number(meta.rooms?.[k]) || 0;
+      $(`#room-${k}`).classList.toggle('on', lvl > 0);
+      $(`#room-${k}`).setAttribute('aria-pressed', lvl > 0 ? 'true' : 'false');
+      $(`#rl-${k}`).textContent = meta.rooms ? roomText(lvl) : '--';
+    }
+
     const firing = /ATIVO/.test(v.V8 || '');
     $('#ha-alarme').classList.toggle('firing', firing);
     $('#dev-alarme').classList.toggle('firing', firing);
@@ -277,12 +338,22 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
   }
 
   function applyState(s) {
-    const prev = values;
+    const prev = values, prevScene = meta.scene, prevRooms = meta.rooms;
     const changed = JSON.stringify(prev) !== JSON.stringify(s.values);
     values = s.values || {};
     meta = s;
     lastStateAt = Date.now();
+    const ORIGEM = { painel: 'pelo celular', casa3d: 'pela casa 3D', blynk: 'pelo Blynk' };
+    if (!first && s.scene && s.scene.id !== prevScene?.id) event(`Cena ${s.scene.nome} iniciada ${ORIGEM[s.scene.origem] || ''}`, 'cyan');
     if (!first && changed) describe(prev, values);
+    if (!first) for (const [k, n] of ROOMS) {
+      const a = Number(prevRooms?.[k]) || 0, b = Number(s.rooms?.[k]) || 0;
+      if (a === b) continue;
+      const who = s.scene ? `cena ${s.scene.nome}` : Date.now() - (recentCmd[k] || 0) < 4000 ? 'pelo painel' : 'pelo celular';
+      event(`${b === 0 ? 'Luz apagada' : b >= 100 ? 'Luz acesa' : `Luz a ${b}%`} — ${n.toLowerCase()} (${who})`, b ? 'amber' : '');
+    }
+    if (!first && prevScene && !s.scene) event(`Cena ${prevScene.nome} concluída`, 'cyan');
+    renderScenes();
     if (first) {
       event(s.mode === 'live' ? 'Conectado ao Blynk — espelhando o NodeMCU em tempo real' : 'Modo demonstração — sensores simulados com as regras do firmware', 'cyan');
       if (s.mode !== 'live') {

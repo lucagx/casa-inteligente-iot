@@ -94,12 +94,15 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     transparent: true, opacity: 0.55, clearcoat: 0.5, clearcoatRoughness: 0.08, envMapIntensity: 0.6, depthWrite: false,
   });
 
-  // luzes emissivas controladas pelo estado da "Luz" (V0)
+  // luzes emissivas por cômodo (state.rooms); o LED do D1 (V0) é a luz geral, aceso se algum cômodo estiver aceso
+  // cada cômodo tem o próprio material: mergeStatic() junta por material, então eles continuam separados
   const warmEmissive = () => std({ color: 0xfff4e2, emissive: 0xffc27a, emissiveIntensity: 0, roughness: 0.4 });
   // cúpulas opacas (não acendem); só a lâmpada dentro delas brilha
   M.lampShade = std({ color: 0xece6dc, roughness: 0.75, side: THREE.DoubleSide });
   M.lampMetal = std({ color: 0x1d1f22, roughness: 0.45, metalness: 0.6, side: THREE.DoubleSide });
-  M.bulb = warmEmissive();
+  M.bulb = warmEmissive();        // sala
+  M.bulbCozinha = warmEmissive();
+  M.bulbQuarto = warmEmissive();
   M.ledStrip = warmEmissive();
   M.downlight = warmEmissive();
   M.bollard = warmEmissive();
@@ -316,7 +319,11 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
 
   // emissivo de cada tipo de luz [dia, noite]. O bloom noturno começa em ~1,25: fitas longas ficam abaixo
   // (brilham sem espalhar); só as lâmpadas pequenas passam um pouco do limite e ganham um halo discreto
-  const lightMats = [[M.bulb, 1.0, 2.0], [M.ledStrip, 0.5, 0.9], [M.downlight, 0.5, 0.9], [M.bollard, 0.6, 1.2]];
+  // [material, dia, noite, cômodo]
+  const lightMats = [
+    [M.bulb, 1.0, 2.0, 'sala'], [M.ledStrip, 0.5, 0.9, 'sala'], [M.bulbCozinha, 1.0, 2.0, 'cozinha'],
+    [M.bulbQuarto, 1.0, 2.0, 'quarto'], [M.downlight, 0.5, 0.9, 'externa'], [M.bollard, 0.6, 1.2, 'externa'],
+  ];
   // "Poças de luz": círculos aditivos no chão que imitam o facho de um spot sem custo de luz real
   const poolTex = (() => {
     const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -327,23 +334,23 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     g.fillStyle = grd; g.fillRect(0, 0, 128, 128);
     const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
   })();
-  const lightPools = []; // { mat, base }
-  function lightPool(color, x, y, z, rx, rz = rx, base = 0.55) {
+  const lightPools = []; // { mat, base, zone }
+  function lightPool(color, x, y, z, rx, rz = rx, base = 0.55, zone = 'sala') {
     const mat = new THREE.MeshBasicMaterial({ map: poolTex, color, transparent: true, opacity: 0, depthWrite: false,
       blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -4, toneMapped: true });
     const m = new THREE.Mesh(new THREE.PlaneGeometry(rx * 2, rz * 2), mat);
     m.rotation.x = -Math.PI / 2; m.position.set(x, y, z); m.renderOrder = 2;
     root.add(m);
-    lightPools.push({ mat, base });
+    lightPools.push({ mat, base, zone });
   }
-  const pointLights = []; // { light, base }
+  const pointLights = []; // { light, base, zone }
   // Luzes pontuais custam em TODO pixel de TODO material padrão, mesmo apagadas,
   // por isso são poucas e nenhuma projeta sombra (sombra de luz pontual = 6 renders extras da cena).
-  function addPoint(color, intensity, dist, x, y, z) {
+  function addPoint(color, intensity, dist, x, y, z, zone) {
     const l = new THREE.PointLight(color, 0, dist, 2);
     l.position.set(x, y, z);
     root.add(l);
-    pointLights.push({ light: l, base: intensity });
+    pointLights.push({ light: l, base: intensity, zone });
     return l;
   }
 
@@ -693,8 +700,8 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     const pend = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.32, 0.22, 32, 1, true), M.lampShade);
     pend.position.set(0, SLAB0 - 1.15, -1.4);
     interior.add(pend);
-    sph(interior, 0.06, M.bulb, 0, SLAB0 - 1.18, -1.4);
-    lightPool(0xffc88a, 0, FL + 0.78, -1.4, 0.5, 0.75, 0.3); // facho no tampo da mesa
+    sph(interior, 0.06, M.bulbCozinha, 0, SLAB0 - 1.18, -1.4);
+    lightPool(0xffc88a, 0, FL + 0.78, -1.4, 0.5, 0.75, 0.3, 'cozinha'); // facho no tampo da mesa
   }
 
   // Cozinha
@@ -717,7 +724,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
       const s = new THREE.Mesh(new THREE.SphereGeometry(0.15, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.lampMetal);
       s.position.set(x, SLAB0 - 1.45, -1.0);
       interior.add(s);
-      sph(interior, 0.045, M.bulb, x, SLAB0 - 1.41, -1.0);
+      sph(interior, 0.045, M.bulbCozinha, x, SLAB0 - 1.41, -1.0);
     }
     box(interior, 0.4, 0.3, 0.3, M.steel, 5.2, FL + 1.07, -3.1, { round: 0.03 }); // cafeteira
     plant(interior, 2.2, -3.1, 0.5, FL + 0.92);
@@ -766,7 +773,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
       const ls = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 0.2, 24, 1, true), M.lampShade);
       ls.position.set(x, UFL + 0.72, bz0 + 0.22);
       interior.add(ls);
-      sph(interior, 0.04, M.bulb, x, UFL + 0.72, bz0 + 0.22);
+      sph(interior, 0.04, M.bulbQuarto, x, UFL + 0.72, bz0 + 0.22);
     }
     // ventilador de teto: gira conforme a temperatura do DHT11 (V4), parado abaixo de 26 °C
     cyl(interior, 0.012, 0.012, 0.32, M.steel, bx, ROOF0 - 0.16, bzc + 0.3, 8);
@@ -889,7 +896,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     const pl = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.06, 0.02), M.poolLight);
     pl.position.set(px, -0.45, pz - pd / 2 + wt + 0.011);
     root.add(pl);
-    lightPool(0x46dcff, px, yF + 0.012, pz, pw * 0.5, pd * 0.55, 0.45);
+    lightPool(0x46dcff, px, yF + 0.012, pz, pw * 0.5, pd * 0.55, 0.45, 'externa');
     // escada de aço na ponta leste: dá a escala da profundidade
     {
       const lx = px + pw / 2 - wt - 0.1, ox = px + pw / 2 + 0.25;
@@ -1321,32 +1328,32 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   root.add(holo);
 
   // ================================================================
-  // Luzes internas/externas (ligadas ao V0)
+  // Luzes internas/externas por cômodo (state.rooms; a luz geral é o D1/V0)
   // ================================================================
-  addPoint(0xffb86b, 22, 10, -3.0, 2.9, 1.3);        // sala (34 deixava mancha no teto)
-  addPoint(0xffc98a, 18, 9, 2.6, 2.8, -1.2);          // jantar/cozinha
-  addPoint(0xffb86b, 26, 8, 2.0, UFL + 2.5, -0.8);    // superior (quarto/escritório)
+  addPoint(0xffb86b, 22, 10, -3.0, 2.9, 1.3, 'sala');        // sala (34 deixava mancha no teto)
+  addPoint(0xffc98a, 18, 9, 2.6, 2.8, -1.2, 'cozinha');      // jantar/cozinha
+  addPoint(0xffb86b, 26, 8, 2.0, UFL + 2.5, -0.8, 'quarto'); // superior (quarto/escritório)
   // área externa: só a qualidade alta usa luzes reais; as outras usam poças de luz (mesmo visual, custo ~zero)
   const eaves = [[-4.8, 3.72, -4.8, 5.2, 0.12], [-0.4, 3.72, -0.4, 5.2, 0.12], [3.0, 3.72, 3.0, 4.9, 0.09], [7.2, 3.72, 7.2, 2.2, 0.09]];
   if (hi) {
-    addPoint(0xffc27a, 10, 7, 3.0, 0.9, 7.6);         // caminho
+    addPoint(0xffc27a, 10, 7, 3.0, 0.9, 7.6, 'externa'); // caminho
     for (const [x, z, tx, tz] of eaves) {
       const sp = new THREE.SpotLight(0xffc88a, 0, 9, 0.62, 0.85, 2);
       sp.position.set(x, SLAB0 - 0.02, z);
       sp.target.position.set(tx, 0, tz);
       root.add(sp, sp.target);
-      pointLights.push({ light: sp, base: 60 });
+      pointLights.push({ light: sp, base: 60, zone: 'externa' });
     }
   } else {
-    for (const [, , tx, tz, y] of eaves) lightPool(0xffc88a, tx, y + 0.01, tz, 1.9, 1.9, 0.5);
-    lightPool(0xffc27a, 3.0, 0.08, 7.6, 2.4, 3.2, 0.32);    // caminho
+    for (const [, , tx, tz, y] of eaves) lightPool(0xffc88a, tx, y + 0.01, tz, 1.9, 1.9, 0.5, 'externa');
+    lightPool(0xffc27a, 3.0, 0.08, 7.6, 2.4, 3.2, 0.32, 'externa');    // caminho
   }
 
   // ================================================================
   // Estado e animação
   // ================================================================
   const S = {
-    light: 0, lightT: 0,
+    zone: { sala: 0, cozinha: 0, quarto: 0, externa: 0 }, zoneT: { sala: 0, cozinha: 0, quarto: 0, externa: 0 },
     door: 0, doorT: 0,
     win: 0, winT: 0,
     alarm: 0, alarmT: 0, armed: false,
@@ -1433,7 +1440,8 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   drawRoom({});
 
   function setState(v, meta) {
-    S.lightT = v.V0 === '1' ? 1 : 0;
+    // nível 0–100 de cada cômodo vindo do servidor (state.rooms); servidor antigo sem cômodos: tudo segue o D1 (V0)
+    for (const k in S.zoneT) S.zoneT[k] = meta.rooms ? Math.min(1, Math.max(0, Number(meta.rooms[k]) / 100 || 0)) : v.V0 === '1' ? 1 : 0;
     S.doorT = v.V1 === '1' ? 1 : 0;
     S.winT = v.V7 === 'ABERTA' ? 1 : 0;
     S.armed = v.V9 === '1';
@@ -1462,14 +1470,15 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
 
   const tmpV = new THREE.Vector3();
   function update(dt, t) {
-    // luzes (V0)
-    S.light = damp(S.light, S.lightT, 5, dt);
+    // luzes por cômodo
+    const Z = S.zone;
+    for (const k in Z) Z[k] = damp(Z[k], S.zoneT[k], 5, dt);
     const nightBoost = 0.35 + S.night * 0.65;
-    for (const p of pointLights) p.light.intensity = p.base * S.light * nightBoost;
+    for (const p of pointLights) p.light.intensity = p.base * Z[p.zone] * nightBoost;
     // lâmpadas/fitas: brilho contido à noite (antes chegava a 6,9 e o bloom "estourava")
-    for (const [m, day, night] of lightMats) m.emissiveIntensity = S.light * (day + S.night * (night - day));
-    for (const lp of lightPools) lp.mat.opacity = lp.base * S.light * (0.15 + S.night * 0.85);
-    M.poolLight.emissiveIntensity = S.light * (0.3 + S.night * 0.3); // antes 2,8: virava uma estrela na água
+    for (const [m, day, night, zone] of lightMats) m.emissiveIntensity = Z[zone] * (day + S.night * (night - day));
+    for (const lp of lightPools) lp.mat.opacity = lp.base * Z[lp.zone] * (0.15 + S.night * 0.85);
+    M.poolLight.emissiveIntensity = Z.externa * (0.3 + S.night * 0.3); // antes 2,8: virava uma estrela na água
     // relógio da TV: redesenha ao virar o minuto, mesmo sem estado novo
     if (Math.floor(Date.now() / 60000) !== tvMinute) drawTV();
 

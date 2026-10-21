@@ -111,6 +111,9 @@ let state = {
   error: null,
   ts: Date.now(),
   readAt: null, // hora da última leitura bem-sucedida dos sensores (ts muda a cada batimento)
+  scene: null, // cena em andamento (I4): { id, nome, origem, passo, total } ou null
+  // luzes por cômodo, nível 0–100. O LED do D1 (V0) é a luz geral: aceso enquanto algum cômodo estiver aceso
+  rooms: { sala: 0, cozinha: 0, quarto: 0, externa: 0 },
   // no modo ao vivo começa vazio: a página mostra "--" até a primeira leitura real
   values: MODE === "live" ? {} : {
     V0: "0", V1: "0", V3: "1", V4: "24.0", V5: "58",
@@ -123,6 +126,7 @@ let state = {
 const clients = new Set();
 
 function broadcast() {
+  syncLuzes(); // luz geral (D1) x cômodos — ver "Luzes por cômodo" abaixo
   state.ts = Date.now();
   const payload = `event: state\ndata: ${JSON.stringify(state)}\n\n`;
   for (const res of clients) res.write(payload);
@@ -313,6 +317,87 @@ app.post("/api/command", async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(502).json({ ok: false, error: err.message });
+  }
+});
+
+// ------------------------------------------------------------------
+// Cenas de um toque (I4) — definições em server/cenas.js
+// ------------------------------------------------------------------
+const { criarCenas } = require("./server/cenas");
+
+// mesmo caminho do /api/command: simulação no modo demonstração, Blynk no ao vivo
+async function comandar(pin, value) {
+  if (MODE === "demo") return simCommand(pin, value);
+  await blynkUpdate(pin, value);
+  if (pin === "V2") setValues({ V7: String(value) === "1" ? "ABERTA" : "FECHADA" });
+  else setValues({ [pin]: value });
+  broadcast();
+}
+
+// ------------------------------------------------------------------
+// Luzes por cômodo — o LED do D1 (V0) é a luz geral da casa:
+//   - algum cômodo aceso ⇒ D1 aceso; todos apagados ⇒ D1 apagado (setRoom)
+//   - D1 mudou por fora (painel, app Blynk, regra do automático): acendeu com tudo apagado ⇒
+//     acende todos os cômodos; apagou ⇒ apaga todos (syncLuzes, chamado a cada broadcast)
+// ------------------------------------------------------------------
+let ultimoV0;
+function syncLuzes() {
+  const v0 = state.values.V0;
+  if (v0 === undefined || v0 === ultimoV0) return;
+  ultimoV0 = v0;
+  const algum = Object.values(state.rooms).some((n) => n > 0);
+  if (v0 === "1" && !algum) for (const k in state.rooms) state.rooms[k] = 100;
+  if (v0 === "0") for (const k in state.rooms) state.rooms[k] = 0;
+}
+// "todos" ajusta os quatro cômodos de uma vez
+async function setRoom(room, level) {
+  const n = Math.round(Math.min(100, Math.max(0, Number(level) || 0)));
+  const alvo = room === "todos" ? Object.keys(state.rooms) : [room];
+  if (!alvo.every((k) => k in state.rooms)) throw Object.assign(new Error(`Cômodo "${room}" não existe.`), { status: 400 });
+  for (const k of alvo) state.rooms[k] = n;
+  const algum = Object.values(state.rooms).some((x) => x > 0);
+  if ((state.values.V0 === "1") !== algum) {
+    if (state.values.V3 === "1") await comandar("V3", 0); // o firmware só aceita comando de luz no manual
+    await comandar("V0", algum ? 1 : 0);
+  }
+  broadcast();
+}
+app.post("/api/room", async (req, res) => {
+  const { room, level } = req.body || {};
+  try {
+    await setRoom(String(room || ""), level);
+    res.json({ ok: true, rooms: state.rooms });
+  } catch (err) {
+    res.status(err.status || 502).json({ ok: false, error: err.message });
+  }
+});
+
+const cenas = criarCenas({
+  // "luz:quarto" e afins = cômodos (acendem/apagam o D1 pela regra acima); "V…" = pino da placa
+  async enviar(pin, value) {
+    if (pin.startsWith("luz:")) return setRoom(pin.slice(4), value);
+    return comandar(pin, value);
+  },
+  aoMudar(cena) {
+    state.scene = cena;
+    broadcast();
+  },
+  aoTerminar(cena, erro) {
+    if (MODE === "live") setTimeout(pollBlynk, 400); // confirma o estado real da placa
+    // registro: no console por enquanto; com o histórico (H3) vira historico.evento("cena", cena.origem, cena.nome)
+    console.log(`[cena] ${cena.nome} (${cena.origem}) ${erro ? `falhou no passo ${cena.passo + 1}: ${erro.message}` : "concluída"}`);
+  },
+});
+
+app.get("/api/scenes", (_req, res) => res.json(cenas.lista()));
+
+app.post("/api/scene", (req, res) => {
+  const { nome, origem } = req.body || {};
+  try {
+    const c = cenas.executar(String(nome || ""), ["painel", "casa3d", "blynk"].includes(origem) ? origem : "painel");
+    res.status(202).json({ ok: true, ...c });
+  } catch (err) {
+    res.status(err.status || 500).json({ ok: false, error: err.message });
   }
 });
 

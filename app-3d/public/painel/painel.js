@@ -16,19 +16,33 @@ const ICON = {
   door: '<path d="M5 21V4a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v17"/><path d="M3 21h18"/><circle cx="13" cy="12" r="1"/>',
   window: '<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M12 4v16M4 12h16"/>',
   siren: '<path d="M6 18v-5a6 6 0 0 1 12 0v5"/><path d="M4 21h16M12 3v2M4.5 6.5l1.4 1.4M19.5 6.5l-1.4 1.4"/>',
+  // cenas (o servidor manda o nome do ícone em /api/scenes)
+  chegar: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/>',
+  sair: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
+  lua: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+  play: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5z"/>',
 };
 const svg = (k) => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
 
 // os mesmos atuadores do painel da casa 3D (js/ui.js); pin = de onde vem o estado, write = para onde vai o comando
 const DEVICES = [
-  { key: 'luz', pin: 'V0', write: 'V0', icon: 'bulb', name: 'Iluminação', hw: 'LED · D1 · V0', on: (v) => v.V0 === '1', label: (on) => (on ? 'Ligada' : 'Desligada') },
+  { key: 'luz', pin: 'V0', write: 'V0', icon: 'bulb', name: 'Luz geral', hw: 'LED · D1 · V0 · todos os cômodos', on: (v) => v.V0 === '1', label: (on) => (on ? 'Ligada' : 'Desligada') },
   { key: 'porta', pin: 'V1', write: 'V1', icon: 'door', name: 'Porta', hw: 'Trava · D0 · V1', on: (v) => v.V1 === '1', label: (on) => (on ? 'Destrancada' : 'Trancada') },
   { key: 'janela', pin: 'V7', write: 'V2', icon: 'window', name: 'Janela', hw: 'Servo · D7 · V2', on: (v) => v.V7 === 'ABERTA', label: (on, v) => fmt.janela(v.V7) },
   { key: 'alarme', pin: 'V9', write: 'V9', icon: 'siren', name: 'Alarme', hw: 'Buzzer · D8 · V9', on: (v) => v.V9 === '1', label: (on, v) => { const t = fmt.alarme(v.V8, v.V9); return t === 'Disparado' ? 'DISPARADO' : t; }, anyMode: true },
 ];
 
+// luzes por cômodo (nível 0–100 em state.rooms): qualquer uma acesa mantém o LED do D1 (luz geral) aceso
+const ROOMS = [
+  { key: 'sala', name: 'Sala' },
+  { key: 'cozinha', name: 'Cozinha' },
+  { key: 'quarto', name: 'Quarto' },
+  { key: 'externa', name: 'Externa' },
+];
+
 let values = {}, meta = {}, lastStateAt = 0, online = false, firing = false;
 const pending = {}; // comando enviado e ainda não confirmado pelo estado: key → { want, until }
+const pendingRoom = {}; // idem para os cômodos: key → { want (nível), until }
 
 // ---------- montagem ----------
 $('#sensors').innerHTML = `
@@ -38,11 +52,21 @@ $('#sensors').innerHTML = `
   ${SENSORES.ldr ? `<div class="sensor" id="sLuz"><span id="icLuz">${svg('sun')}</span><div><div class="k">Luminosidade</div><div class="v sm"><span id="vLuz">--</span><small>%</small></div></div></div>` : ''}
   ${SENSORES.garagem ? `<div class="sensor" id="sCar">${svg('car')}<div><div class="k">Garagem</div><div class="v sm"><span id="vCar">--</span><small>cm</small></div></div></div>` : ''}`;
 
-$('#devices').innerHTML = DEVICES.map((d) => `
-  <button class="device" id="dev-${d.key}" type="button" aria-pressed="false">
-    <span class="drow"><span class="dicon">${svg(d.icon)}</span><span class="switch"><i></i></span></span>
-    <span class="dtext"><span class="dname">${d.name}</span><span class="dstate" id="st-${d.key}">--</span><span class="dhw">${d.hw}</span></span>
-  </button>`).join('');
+const tile = (id, icon, name, hw) => `
+  <button class="device" id="${id}" type="button" aria-pressed="false">
+    <span class="drow"><span class="dicon">${svg(icon)}</span><span class="switch"><i></i></span></span>
+    <span class="dtext"><span class="dname">${name}</span><span class="dstate" id="st-${id}">--</span><span class="dhw">${hw}</span></span>
+  </button>`;
+const luzGeral = DEVICES.find((d) => d.key === 'luz');
+// luz geral em faixa: ícone, texto e interruptor numa linha só
+$('#lights').innerHTML = `
+  <button class="device geral" id="dev-luz" type="button" aria-pressed="false">
+    <span class="dicon">${svg(luzGeral.icon)}</span>
+    <span class="dtext"><span class="dname">${luzGeral.name}</span><span class="dstate" id="st-dev-luz">--</span><span class="dhw">${luzGeral.hw}</span></span>
+    <span class="switch"><i></i></span>
+  </button>`
+  + ROOMS.map((r) => tile(`room-${r.key}`, 'bulb', r.name, 'acende o D1')).join('');
+$('#devices').innerHTML = DEVICES.filter((d) => d !== luzGeral).map((d) => tile(`dev-${d.key}`, d.icon, d.name, d.hw)).join('');
 
 const modeAuto = $('#modeAuto'), modeManual = $('#modeManual');
 const chipLink = $('#chipLink'), chipDev = $('#chipDev'), chipAge = $('#chipAge');
@@ -89,6 +113,79 @@ async function toggle(d) {
   if (!ok) { delete pending[d.key]; render(); }
 }
 DEVICES.forEach((d) => $(`#dev-${d.key}`).addEventListener('click', () => toggle(d)));
+
+// ---------- luzes por cômodo ----------
+async function sendRoom(room, level) {
+  try {
+    const r = await fetch('/api/room', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ room, level }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    return true;
+  } catch (e) {
+    toast(`Não foi possível mudar a luz: ${e.message}`, 'err');
+    return false;
+  }
+}
+const roomLevel = (k) => Number(meta.rooms?.[k]) || 0;
+async function toggleRoom(r) {
+  if (pendingRoom[r.key]) return;
+  const want = roomLevel(r.key) > 0 ? 0 : 100;
+  // o servidor passa para o manual quando o cômodo muda a luz geral (o firmware só aceita a luz no manual)
+  const geralDepois = ROOMS.some((x) => (x.key === r.key ? want : roomLevel(x.key)) > 0);
+  if (values.V3 === '1' && geralDepois !== (values.V0 === '1')) toast('Modo manual ativado para controlar pelo painel');
+  pendingRoom[r.key] = { want, until: Date.now() + 6000 };
+  navigator.vibrate?.(12);
+  render();
+  if (!(await sendRoom(r.key, want))) { delete pendingRoom[r.key]; render(); }
+}
+ROOMS.forEach((r) => $(`#room-${r.key}`).addEventListener('click', () => toggleRoom(r)));
+
+// ---------- cenas de um toque (I4) ----------
+let scenes = [], loadingScenes = false;
+async function loadScenes() {
+  if (loadingScenes) return;
+  loadingScenes = true;
+  try {
+    const r = await fetch('/api/scenes', { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status);
+    scenes = await r.json();
+  } catch { return; } // sem servidor: tenta de novo no próximo estado
+  finally { loadingScenes = false; }
+  $('#scenes').innerHTML = scenes.map((c) => `
+    <button class="scene" id="sc-${c.id}" type="button" data-scene="${c.id}" title="${c.descricao}">
+      <span class="sicon">${svg(c.icone)}</span>
+      <span class="sname">${c.nome}</span>
+      <span class="sdesc">${c.descricao}</span>
+      <i class="sprog"></i>
+    </button>`).join('');
+  render();
+}
+$('#scenes').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-scene]');
+  if (!b || meta.scene) return;
+  navigator.vibrate?.(12);
+  try {
+    const r = await fetch('/api/scene', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ nome: b.dataset.scene, origem: 'painel' }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    toast(`Cena ${j.nome} em andamento`);
+  } catch (err) {
+    toast(`Cena não iniciada: ${err.message}`, 'err');
+  }
+});
+let lastScene = null;
+function renderScenes() {
+  const s = meta.scene;
+  for (const c of scenes) {
+    const el = $(`#sc-${c.id}`);
+    const run = s?.id === c.id;
+    el.classList.toggle('run', run);
+    el.disabled = !!s && !run;
+    el.querySelector('.sprog').style.width = run ? `${Math.round((s.passo / s.total) * 100)}%` : '0';
+  }
+  if (lastScene && !s) toast(`Cena ${lastScene.nome} concluída`);
+  lastScene = s || null;
+}
 modeAuto.addEventListener('click', () => setMode(true));
 modeManual.addEventListener('click', () => setMode(false));
 
@@ -135,7 +232,17 @@ function render() {
     el.classList.toggle('locked', auto && !d.anyMode);
     el.classList.toggle('pending', !!pending[d.key]);
     el.setAttribute('aria-pressed', on ? 'true' : 'false');
-    $(`#st-${d.key}`).textContent = pending[d.key] ? 'enviando…' : v[d.pin] === undefined ? '--' : d.label(on, v);
+    $(`#st-dev-${d.key}`).textContent = pending[d.key] ? 'enviando…' : v[d.pin] === undefined ? '--' : d.label(on, v);
+  }
+  for (const r of ROOMS) {
+    const lvl = roomLevel(r.key);
+    const p = pendingRoom[r.key];
+    if (p && (lvl === p.want || now > p.until)) delete pendingRoom[r.key];
+    const el = $(`#room-${r.key}`);
+    el.classList.toggle('on', lvl > 0);
+    el.classList.toggle('pending', !!pendingRoom[r.key]);
+    el.setAttribute('aria-pressed', lvl > 0 ? 'true' : 'false');
+    $(`#st-room-${r.key}`).textContent = pendingRoom[r.key] ? 'enviando…' : !meta.rooms ? '--' : lvl === 0 ? 'Desligada' : lvl >= 100 ? 'Ligada' : `${lvl} %`;
   }
 
   const nowFiring = /ATIVO/.test(v.V8 || '');
@@ -157,6 +264,8 @@ function render() {
   chipDev.querySelector('span').textContent = !meta.mode ? 'NodeMCU' : live ? (meta.deviceOnline ? 'NodeMCU online' : 'NodeMCU offline') : 'NodeMCU simulado';
   $('#errBox').hidden = !meta.error;
   $('#errBox').textContent = meta.error ? `Blynk: ${meta.error}` : '';
+  if (online && !scenes.length) loadScenes();
+  renderScenes();
   tick();
 }
 
@@ -169,7 +278,7 @@ function tick() {
 }
 setInterval(() => {
   const now = Date.now();
-  if (Object.values(pending).some((p) => now > p.until)) render();
+  if ([...Object.values(pending), ...Object.values(pendingRoom)].some((p) => now > p.until)) render();
   else tick();
 }, 1000);
 
