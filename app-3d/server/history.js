@@ -51,6 +51,7 @@ const num = (v) => (v !== "" && Number.isFinite(Number(v)) ? Number(v) : v);
 function motorMemoria() {
   let leituras = [];
   let eventos = [];
+  const config = new Map();
   const entre = (x, desde, ate) => x.ts >= desde && x.ts <= ate;
   return {
     nome: "memoria",
@@ -76,10 +77,24 @@ function motorMemoria() {
       }
       return out;
     },
+    async lerConfig(chave) {
+      return config.has(chave) ? structuredClone(config.get(chave)) : null;
+    },
+    async salvarConfig(chave, valor) {
+      config.set(chave, structuredClone(valor));
+    },
     async podar(dias) {
       const corte = Date.now() - dias * DIA_MS;
       leituras = leituras.filter((l) => l.ts >= corte);
       eventos = eventos.filter((e) => e.ts >= corte);
+    },
+    async apagar() {
+      leituras = [];
+      eventos = [];
+    },
+    async contar() {
+      const primeiro = Math.min(leituras[0]?.ts ?? Infinity, eventos[0]?.ts ?? Infinity);
+      return { leituras: leituras.length, eventos: eventos.length, desde: Number.isFinite(primeiro) ? primeiro : null };
     },
     async fechar() {},
   };
@@ -107,6 +122,13 @@ CREATE INDEX IF NOT EXISTS eventos_ts ON eventos (ts);
 -- ninguém lê por lá; o servidor conecta como dono das tabelas e não é afetado
 ALTER TABLE leituras ENABLE ROW LEVEL SECURITY;
 ALTER TABLE eventos ENABLE ROW LEVEL SECURITY;
+-- preferências que precisam sobreviver ao reinício (rotinas aceitas, modo ausente, limite aprendido, privacidade)
+CREATE TABLE IF NOT EXISTS config (
+  chave text        PRIMARY KEY,
+  valor jsonb       NOT NULL,
+  ts    timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE config ENABLE ROW LEVEL SECURITY;
 `;
 const MS = "(extract(epoch FROM ts) * 1000)::float8 AS ts";
 
@@ -164,9 +186,29 @@ function motorPostgres(url) {
       );
       return r.rows;
     },
+    async lerConfig(chave) {
+      const r = await pool.query("SELECT valor FROM config WHERE chave = $1", [chave]);
+      return r.rows[0]?.valor ?? null;
+    },
+    async salvarConfig(chave, valor) {
+      await pool.query(
+        "INSERT INTO config (chave, valor, ts) VALUES ($1, $2, now()) ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor, ts = now()",
+        [chave, JSON.stringify(valor)]
+      );
+    },
     async podar(dias) {
       await pool.query("DELETE FROM leituras WHERE ts < now() - make_interval(days => $1)", [dias]);
       await pool.query("DELETE FROM eventos WHERE ts < now() - make_interval(days => $1)", [dias]);
+    },
+    async apagar() {
+      await pool.query("TRUNCATE leituras, eventos");
+    },
+    async contar() {
+      const r = await pool.query(
+        `SELECT (SELECT count(*) FROM leituras)::int AS leituras, (SELECT count(*) FROM eventos)::int AS eventos,
+                (SELECT (extract(epoch FROM min(ts)) * 1000)::float8 FROM eventos) AS desde`
+      );
+      return r.rows[0];
     },
     async fechar() {
       await pool.end();
@@ -305,6 +347,18 @@ function semearDemo(agora, dias = 7) {
       if (bat >= 100) { muda(t, "V24", 0); ev(t, "carregador", "automatico", "parado"); cargaAs = null; }
     }
 
+    // I6: em casa e com calor antes dos 30 °C, às vezes abre a janela na mão (passa para o manual);
+    // quando refresca, fecha e volta ao automático — o conforto adaptativo aprende com isso
+    if (!fora && acordado && h >= 11 && h < 18 && s.V3 === "1" && s.V7 === "FECHADA" && temp >= 27.6 && temp < 30 && rnd() < 0.2) {
+      muda(t, "V3", 0); ev(t, "modo", "painel", "manual");
+      muda(t + 15000, "V7", "ABERTA"); ev(t + 15000, "janela", "painel", "aberta");
+      r.abriuNaMao = true;
+    } else if (r.abriuNaMao && s.V7 === "ABERTA" && temp <= 26.2 && rnd() < 0.5) {
+      muda(t, "V7", "FECHADA"); ev(t, "janela", "painel", "fechada");
+      muda(t + 15000, "V3", 1); ev(t + 15000, "modo", "painel", "automatico");
+      r.abriuNaMao = false;
+    }
+
     // janela no automático: abre ≥ 30 °C, fecha ≤ 27 °C
     if (s.V3 === "1") {
       if (temp >= 30 && s.V7 === "FECHADA") { muda(t, "V7", "ABERTA"); ev(t, "janela", "automatico", "aberta"); }
@@ -338,11 +392,14 @@ function criarHistorico({ url, demo, valores, lidoEm }) {
   const ouvintes = new Set();
   const timers = [];
   let pronto = false, gravando = false, falhou = false, ultimaAmostra = 0, ultimoTs = 0;
+  // I8: coleta pausada (nada novo é gravado; a casa continua funcionando) e retenção configurável
+  let pausado = false, retencao = RETENCAO_DIAS;
   // relógio que nunca repete: duas mudanças no mesmo milissegundo saem em ordem do banco (empate no ts não tem ordem)
   const relogio = () => (ultimoTs = Math.max(Date.now(), ultimoTs + 1));
 
   function evento(tipo, origem, detalhe, ts = relogio()) {
     const e = { ts, tipo, origem, detalhe };
+    if (pausado) return e;
     fila.eventos.push(e);
     for (const f of ouvintes) f(e);
     return e;
@@ -359,6 +416,7 @@ function criarHistorico({ url, demo, valores, lidoEm }) {
 
   /** Chamado pelo servidor a cada mudança de estado: `mudou` = pinos novos, `antes` = valores anteriores. */
   function registrar(mudou, antes) {
+    if (pausado) return;
     const agora = relogio(), v = valores();
     for (const [pino, valor] of Object.entries(mudou)) {
       if (!AMOSTRADOS.includes(pino)) fila.leituras.push({ ts: agora, pino, valor });
@@ -375,6 +433,7 @@ function criarHistorico({ url, demo, valores, lidoEm }) {
   }
 
   function amostrar() {
+    if (pausado) return;
     const agora = relogio(), lido = lidoEm();
     // só com leitura recente: sem página aberta e sem consulta de fundo o valor estaria velho
     if (agora - ultimaAmostra < AMOSTRA_MS || !lido || agora - lido > AMOSTRA_MS) return;
@@ -419,11 +478,11 @@ function criarHistorico({ url, demo, valores, lidoEm }) {
       ultimaAmostra = 0;
     }
     await descarregar();
-    await motor.podar(RETENCAO_DIAS).catch(() => {});
+    await motor.podar(retencao).catch(() => {});
     timers.push(
       setInterval(descarregar, LOTE_MS),
       setInterval(amostrar, 30000),
-      setInterval(() => motor.podar(RETENCAO_DIAS).catch(() => {}), DIA_MS)
+      setInterval(() => motor.podar(retencao).catch(() => {}), DIA_MS)
     );
     for (const t of timers) t.unref();
   }
@@ -448,6 +507,51 @@ function criarHistorico({ url, demo, valores, lidoEm }) {
     return { motor: motor.nome, desde, ate, eventos: await motor.eventos(desde, ate, tipos, limite) };
   }
 
+  /** Preferências persistentes (tabela config): null se não existir; nunca derruba quem chamou. */
+  async function lerConfig(chave) {
+    if (!pronto) await descarregar();
+    try { return await motor.lerConfig(chave); } catch (e) { console.warn(`[historico] config ${chave}: ${e.message}`); return null; }
+  }
+  async function salvarConfig(chave, valor) {
+    try { await motor.salvarConfig(chave, valor); return true; } catch (e) { console.warn(`[historico] config ${chave}: ${e.message}`); return false; }
+  }
+
+  // ---------- privacidade (I8) ----------
+  /** Pausa/retoma a coleta. Ao retomar, o estado atual vira a última leitura de cada pino (os gráficos seguem certos). */
+  function pausar(sim, origem = "painel", registrarEvento = true) {
+    if (pausado === !!sim) return;
+    if (sim) { if (registrarEvento) evento("privacidade", origem, "coleta pausada"); pausado = true; fila.leituras.length = 0; return; }
+    pausado = false;
+    evento("privacidade", origem, "coleta retomada");
+    const v = valores();
+    for (const [pino, valor] of Object.entries(v)) if (!AMOSTRADOS.includes(pino)) fila.leituras.push({ ts: relogio(), pino, valor });
+    ultimaAmostra = 0;
+  }
+  async function setRetencao(dias) {
+    retencao = Math.min(RETENCAO_DIAS, Math.max(1, Math.round(dias)));
+    await motor.podar(retencao);
+  }
+  /** Apaga leituras e eventos (o banco inteiro do histórico). Fica só o registro de que foi apagado. */
+  async function apagar(origem = "painel") {
+    await descarregar();
+    fila.leituras.length = 0;
+    fila.eventos.length = 0;
+    await motor.apagar();
+    // o estado atual volta como ponto de partida, para os gráficos não começarem do nada
+    if (!pausado) {
+      const v = valores();
+      for (const [pino, valor] of Object.entries(v)) if (!AMOSTRADOS.includes(pino)) fila.leituras.push({ ts: relogio(), pino, valor });
+    }
+    const e = { ts: relogio(), tipo: "privacidade", origem, detalhe: "histórico apagado" };
+    fila.eventos.push(e);
+    for (const f of ouvintes) f(e);
+    await descarregar();
+  }
+  async function contar() {
+    await descarregar();
+    return motor.contar();
+  }
+
   async function fechar() {
     timers.forEach(clearInterval);
     await descarregar();
@@ -456,7 +560,9 @@ function criarHistorico({ url, demo, valores, lidoEm }) {
 
   return {
     motor: motor.nome, descricao,
-    iniciar, registrar, comando, evento, amostrar, descarregar, leituras, eventos, fechar,
+    iniciar, registrar, comando, evento, amostrar, descarregar, leituras, eventos, lerConfig, salvarConfig, fechar,
+    pausar, setRetencao, apagar, contar,
+    get pausado() { return pausado; }, get retencao() { return retencao; },
     aoEvento: (f) => ouvintes.add(f),
   };
 }

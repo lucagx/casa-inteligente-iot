@@ -147,3 +147,21 @@ test("demonstração começa com histórico e com o estado atual como última le
   assert.equal(r.pinos.V7.at(-1)[1], "FECHADA");
   await h.fechar();
 });
+
+test("privacidade: coleta pausada não grava nada e apagar limpa o histórico", async () => {
+  const valores = { V0: "0", V1: "0" };
+  const h = criarHistorico({ demo: false, valores: () => valores, lidoEm: () => Date.now() });
+  await h.iniciar();
+  h.registrar({ V0: "1" }, { V0: "0" });
+  h.pausar(true);
+  h.registrar({ V0: "0" }, { V0: "1" });
+  h.evento("luz", "painel", "não deveria");
+  let r = await h.eventos({ desde: 0, ate: Date.now() + 1000, limite: 100 });
+  assert.deepEqual(r.eventos.map((e) => e.detalhe).reverse(), ["ligada", "coleta pausada"]);
+  h.pausar(false);
+  assert.equal((await h.contar()).eventos, 3, "retomada também fica registrada");
+  await h.apagar();
+  r = await h.eventos({ desde: 0, ate: Date.now() + 1000, limite: 100 });
+  assert.deepEqual(r.eventos.map((e) => e.detalhe), ["histórico apagado"]);
+  await h.fechar();
+});
