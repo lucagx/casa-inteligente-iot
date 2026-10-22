@@ -22,6 +22,8 @@
  * PRESENCA_POLL_MS : leitura rápida só do V11 (padrão 500 ms) enquanto há página aberta (B5); 0 desliga.
  * CONSUMO_W, TARIFA_KWH, TARIFA_BRANCA, META_MENSAL_KWH : consumo e economia (I3, server/consumo.js).
  * CONSUMO_V15=1    : publica o consumo do dia (kWh) no V15 do Blynk a cada 5 min (depois de criar o datastream, K1).
+ * Datastreams do servidor no Blynk (K1, server/blynk.js): V16 cena, V18 carregador, V23 luz externa, V25 bateria —
+ *                    publicados quando mudam e lidos de volta (app do Blynk e automações acionam o servidor).
  * CARREGADOR_KW, BATERIA_KWH : carregador do carro elétrico (V3, server/carregador.js) — virtual, fora do protoboard.
  * Rotina aprendida, sugestões, automações e modo ausente (I5): server/rotina.js, rotas /api/rotina e /api/ausente.
  * Conforto adaptativo da janela (I6): server/conforto.js, rotas /api/conforto. CONFORTO_V17=1 publica o limite no V17.
@@ -147,12 +149,14 @@ let state = {
 };
 
 const clients = new Set();
+let ponte = null; // K1: datastreams do servidor no Blynk (só ao vivo), criada depois das cenas
 
 function broadcast() {
   syncLuzes(); // luz geral (D1) x cômodos — ver "Luzes por cômodo" abaixo
   registrarComodos();
   registrarCarro();
   marcarPresenca();
+  ponte?.publicar(state);
   state.ts = Date.now();
   const payload = `event: state\ndata: ${JSON.stringify(state)}\n\n`;
   for (const res of clients) res.write(payload);
@@ -212,7 +216,8 @@ async function blynkGet(pins) {
 
 // pinos que de fato existem no Blynk: um datastream que falta (ex.: V14 antes de criar no Console)
 // derruba a leitura em lote; depois da 1ª leitura pino a pino só os que responderam continuam
-let pinosAtivos = PINS;
+// (ao vivo, também os pinos que o app do Blynk/automações mudam: V16 cena, V18 carregador, V23 externa — K1)
+let pinosAtivos = MODE === "live" ? PINS.concat(require("./server/blynk").ENTRADAS) : PINS;
 
 // B5: hora da última detecção = borda de subida do V11 (0 → 1)
 let ultimoV11;
@@ -271,7 +276,11 @@ async function pollBlynk() {
         pinosAtivos = ok;
       }
     }
+    // V16/V18/V23 não são sensores: viram ação (cena, carregador, externa) e não entram em state.values
+    const doServidor = {};
+    for (const p of ponte?.entradas || []) if (p in vals) { doServidor[p] = vals[p]; delete vals[p]; }
     const changed = setValues(filtrarLeitura(vals));
+    ponte?.entrada(doServidor);
     state.readAt = Date.now();
     const wasOnline = state.blynkOnline;
     state.blynkOnline = true;
@@ -533,6 +542,25 @@ const cenas = criarCenas({
 
 app.get("/api/scenes", (_req, res) => res.json(cenas.lista()));
 
+// ------------------------------------------------------------------
+// Datastreams do servidor no Blynk (K1) — server/blynk.js. Só no modo ao vivo; origem "blynk" no histórico
+// ------------------------------------------------------------------
+if (MODE === "live") {
+  const { criarPonte } = require("./server/blynk");
+  ponte = criarPonte({
+    enviar: blynkUpdate,
+    avisar: (txt) => console.warn(`[blynk] ${txt}`),
+    async executar(a) {
+      if (a.tipo === "cena") return cenas.executar(a.id, "blynk");
+      if (a.tipo === "externa") return setRoom("externa", a.nivel, "blynk");
+      if (a.tipo === "carregador") {
+        historico.comando(PINOS_CARRO.carregando, "blynk");
+        return atualizarCarro(carregador.comando({ ligado: a.ligado }), "blynk");
+      }
+    },
+  });
+}
+
 app.post("/api/scene", (req, res) => {
   const { nome, origem } = req.body || {};
   try {
@@ -765,10 +793,12 @@ app.get("/api/consumo", async (_req, res) => {
 });
 // consumo do dia no V15 do Blynk (só ao vivo e com CONSUMO_V15=1: o datastream precisa existir — K1)
 if (MODE === "live" && process.env.CONSUMO_V15 === "1") {
-  let avisou = false;
+  let avisou = false, enviado = null;
   setInterval(async () => {
     try {
-      await blynkUpdate("V15", (await calcularConsumo()).hoje.kWh.toFixed(3));
+      // só quando muda (cada envio gasta 1 mensagem da cota): com tudo apagado o valor fica parado
+      const kWh = (await calcularConsumo()).hoje.kWh.toFixed(2);
+      if (kWh !== enviado) { await blynkUpdate("V15", kWh); enviado = kWh; }
     } catch (err) {
       if (!avisou) console.warn(`[consumo] V15 no Blynk: ${err.message}`);
       avisou = true;
