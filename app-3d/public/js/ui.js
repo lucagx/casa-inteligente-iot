@@ -88,6 +88,21 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
   });
   const roomText = (lvl) => (lvl === 0 ? 'off' : lvl >= 100 ? 'on' : `${lvl}%`);
 
+  // V3: carregador do carro (virtual, state.carro): liga/desliga e "só fora de ponta"
+  $('#ev3d').innerHTML = `<span class="rlabel">Carro elétrico <em id="evPct3">--</em></span>
+    <button type="button" class="room" id="ev-ligado" data-ev="ligado" aria-pressed="false">${svg('car')}<span>Carregador</span><b id="evSt3">--</b></button>
+    <button type="button" class="room" id="ev-foraDePonta" data-ev="foraDePonta" aria-pressed="false">${svg('auto')}<span>Fora de ponta</span><b id="evFp3">--</b></button>`;
+  async function toggleCarro(campo) {
+    if (!meta.carro) return;
+    try {
+      const r = await fetch('/api/carregador', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [campo]: !meta.carro[campo], origem: 'casa3d' }) });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || 'falha');
+    } catch (err) { toast(`Não foi possível mudar o carregador: ${err.message}`, 'err'); }
+  }
+  $('#ev3d').addEventListener('click', (e) => { const b = e.target.closest('button[data-ev]'); if (b) toggleCarro(b.dataset.ev); });
+  const evTexto = (c) => (!c ? '--' : !c.naGaragem ? 'carro fora' : c.carregando ? 'carregando' : c.aguardando ? 'aguarda 22h' : c.ligado ? (c.bateria >= 100 ? 'completa' : 'on') : 'off');
+
   const modeAuto = $('#modeAuto'), modeManual = $('#modeManual');
 
   // ---------- hotspots na cena ----------
@@ -102,11 +117,13 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
     { key: 'garagem', anchor: 'garagem', title: 'HC-SR04 · garagem' },
     { key: 'ldr', anchor: 'ldr', title: 'LDR · A0' },
     { key: 'mcu', anchor: 'mcu', title: 'NodeMCU ESP8266' },
+    { key: 'carregador', anchor: 'carregador', title: 'Carregador · carro', ev: true },
   ];
   for (const h of HOT) {
     if ((h.key === 'ldr' && !SENSORES.ldr) || (h.key === 'garagem' && !SENSORES.garagem)) continue;
     const el = document.createElement('div');
-    el.className = 'hotspot' + (h.act ? ' act' : '');
+    el.className = 'hotspot' + (h.act || h.ev ? ' act' : '');
+    if (h.ev) el.addEventListener('click', (e) => { e.stopPropagation(); toggleCarro('ligado'); });
     el.innerHTML = `<span class="dot"></span><span class="tag"><b>${h.title}</b><em id="hv-${h.key}">--</em></span>`;
     if (h.act) el.addEventListener('click', (e) => { e.stopPropagation(); toggle(DEVICES.find((d) => d.key === h.dev)); });
     hv[h.key] = el.querySelector('em');
@@ -325,6 +342,17 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
       hot.garagem.classList.toggle('on', !!z && z.kind !== '');
     }
     if (hv.ldr) hv.ldr.textContent = Number.isFinite(luz) ? `${Math.round(luz)}% · ${v.V6 || ''}` : v.V6 || '--';
+    // V3: carregador do carro
+    const c = meta.carro;
+    $('#evPct3').textContent = c ? `bateria ${Math.floor(c.bateria)}%` : '--';
+    $('#evSt3').textContent = evTexto(c);
+    $('#evFp3').textContent = c ? (c.foraDePonta ? 'on' : 'off') : '--';
+    for (const campo of ['ligado', 'foraDePonta']) {
+      $(`#ev-${campo}`).classList.toggle('on', !!c?.[campo]);
+      $(`#ev-${campo}`).setAttribute('aria-pressed', c?.[campo] ? 'true' : 'false');
+    }
+    hv.carregador.textContent = c ? `${Math.floor(c.bateria)}% · ${evTexto(c)}` : '--';
+    hot.carregador.classList.toggle('on', !!c?.carregando);
     hv.mcu.textContent = meta.deviceOnline ? 'online' : 'offline';
     hot.mcu.classList.toggle('on', !!meta.deviceOnline);
 
@@ -339,7 +367,7 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
   }
 
   function applyState(s) {
-    const prev = values, prevScene = meta.scene, prevRooms = meta.rooms;
+    const prev = values, prevScene = meta.scene, prevRooms = meta.rooms, prevCarro = meta.carro;
     const changed = JSON.stringify(prev) !== JSON.stringify(s.values);
     values = s.values || {};
     meta = s;
@@ -359,6 +387,13 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
       } else {
         for (const [n, , b] of mud) event(`Luz ${txt(b)} — ${n.toLowerCase()} (${who(n.toLowerCase())})`, b ? 'amber' : '');
       }
+    }
+    // V3: carro e carregador
+    const ca = prevCarro, cb = s.carro;
+    if (!first && ca && cb) {
+      if (ca.naGaragem !== cb.naGaragem) event(cb.naGaragem ? 'Carro elétrico chegou à garagem' : 'Carro elétrico saiu da garagem', 'cyan');
+      if (ca.carregando !== cb.carregando) event(cb.carregando ? `Carregador ligado no carro — ${String(cb.kW).replace('.', ',')} kW` : `Carga parou — bateria em ${Math.floor(cb.bateria)}%`, cb.carregando ? 'green' : '');
+      else if (!ca.aguardando && cb.aguardando) event('Carregador aguardando o horário fora de ponta (22h)', 'amber');
     }
     if (!first && prevScene && !s.scene) event(`Cena ${prevScene.nome} concluída`, 'cyan');
     renderScenes();

@@ -52,3 +52,18 @@ test("uso na ponta fica mais caro na tarifa branca", () => {
 test("CONSUMO_W do .env sobrepõe só o que foi informado", () => {
   assert.deepEqual(lerPares("sala=100, base=3, xx=9, quarto=-1", POTENCIA_PADRAO), { ...POTENCIA_PADRAO, sala: 100, base: 3 });
 });
+
+test("carregador do carro (V24): potência cheia enquanto carrega, por faixa", () => {
+  const p = new Date(2026, 9, 20, 18, 0).getTime(); // terça 18h: ponta
+  const r = calcular({ desde: T0, ate: T0 + 24 * H, pinos: { V24: [[p, 1], [p + 2 * H, 0]] }, antes: {} },
+    { potencias: { ...semBase, carregador: 2000 }, tarifa: 1, agora: T0 + 24 * H });
+  perto(r.dias[0].porComodo.carregador, 4, "2 kW × 2 h");
+  perto(r.dias[0].carro.ponta, 4, "tudo na ponta");
+  assert.match(r.dica, /Só fora de ponta/);
+});
+
+test("carregador ligado antes do período (antes.V24) conta desde o início", () => {
+  const r = calcular({ desde: T0, ate: T0 + H, pinos: {}, antes: { V24: [T0 - H, 1] } },
+    { potencias: { ...semBase, carregador: 1000 }, agora: T0 + H });
+  perto(r.dias[0].porComodo.carregador, 1, "1 kW × 1 h");
+});

@@ -8,6 +8,7 @@
  *     Antes do primeiro registro de um cômodo (dados antigos, demonstração), vale a regra da luz geral:
  *     V0 ligado ⇒ todos os cômodos a 100 %.
  *   - "base": NodeMCU, sensores e roteador, sempre ligados.
+ *   - "carregador" do carro elétrico (V3): potência cheia enquanto V24 = 1 (carregando).
  *   - Tarifa convencional TARIFA_KWH (R$/kWh) e simulação da tarifa branca: ponta 18h–21h e intermediária
  *     17h–18h / 21h–22h nos dias úteis; resto (e fim de semana) fora de ponta. Fatores aproximados em relação
  *     à convencional (TARIFA_BRANCA no .env).
@@ -15,7 +16,8 @@
  */
 
 const COMODOS = { sala: "V20", cozinha: "V21", quarto: "V22", externa: "V23" };
-const POTENCIA_PADRAO = { sala: 60, cozinha: 50, quarto: 30, externa: 80, base: 1.5 }; // watts
+const CARREGADOR = "V24"; // carregando (0/1), gravado pelo server.js (server/carregador.js)
+const POTENCIA_PADRAO = { sala: 60, cozinha: 50, quarto: 30, externa: 80, base: 1.5, carregador: 2200 }; // watts
 const FATOR_BRANCA_PADRAO = { fora: 0.75, intermediaria: 1.15, ponta: 1.8 };
 const PASSO_MS = 60000;
 const DIA_MS = 86400000;
@@ -49,7 +51,7 @@ function degraus(pts, inicial) {
 }
 
 /**
- * leituras: resposta de historico.leituras({ desde, ate, pinos: ["V0", "V20".."V23"] })
+ * leituras: resposta de historico.leituras({ desde, ate, pinos: ["V0", "V20".."V23", "V24"] })
  * → consumo por dia, por cômodo e por faixa da tarifa branca, mais resumo, meta, comparação e dica.
  */
 function calcular(leituras, { potencias = POTENCIA_PADRAO, tarifa = 0.85, fatores = FATOR_BRANCA_PADRAO, metaMensal = 25, agora = Date.now() } = {}) {
@@ -64,6 +66,7 @@ function calcular(leituras, { potencias = POTENCIA_PADRAO, tarifa = 0.85, fatore
     const proprio = degraus(pts, antes[pino] ? Math.min(1, Math.max(0, num(antes[pino][1]) / 100 || 0)) : 0);
     nivel[k] = (t) => { const g = v0(t); const p = proprio(t); return t < inicio ? g : p; };
   }
+  const carregando = degraus((pinos[CARREGADOR] || []).map(([t, v]) => [t, num(v) === 1 ? 1 : 0]), num(antes[CARREGADOR]?.[1]) === 1 ? 1 : 0);
   // dados de verdade a partir de quando? (para saber se dá para comparar com a semana anterior)
   const primeiros = Object.values(pinos).map((p) => p[0]?.[0]).filter(Number.isFinite);
   const conhecidos = [...Object.values(antes).map((a) => a[0]), ...primeiros].filter(Number.isFinite);
@@ -74,7 +77,7 @@ function calcular(leituras, { potencias = POTENCIA_PADRAO, tarifa = 0.85, fatore
   const dias = new Map();
   const dia = (t) => {
     const k = chaveDia(t);
-    if (!dias.has(k)) dias.set(k, { dia: k, ts: inicioDoDia(t), kWh: 0, porComodo: { sala: 0, cozinha: 0, quarto: 0, externa: 0, base: 0 }, faixas: { fora: 0, intermediaria: 0, ponta: 0 } });
+    if (!dias.has(k)) dias.set(k, { dia: k, ts: inicioDoDia(t), kWh: 0, porComodo: { sala: 0, cozinha: 0, quarto: 0, externa: 0, carregador: 0, base: 0 }, faixas: { fora: 0, intermediaria: 0, ponta: 0 }, carro: { fora: 0, intermediaria: 0, ponta: 0 } });
     return dias.get(k);
   };
   const h = PASSO_MS / 3600000; // horas por passo
@@ -86,6 +89,8 @@ function calcular(leituras, { potencias = POTENCIA_PADRAO, tarifa = 0.85, fatore
       const e = potencias[k] * nivel[k](t) * h;
       d.porComodo[k] += e; wh += e;
     }
+    const ec = (potencias.carregador || 0) * carregando(t) * h;
+    d.porComodo.carregador += ec; d.carro[f] += ec / 1000; wh += ec;
     d.kWh += wh / 1000; d.faixas[f] += wh / 1000;
   }
   const lista = [...dias.values()].map((d) => ({ ...d, porComodo: Object.fromEntries(Object.entries(d.porComodo).map(([k, wh]) => [k, wh / 1000])) }));
@@ -128,17 +133,28 @@ function calcular(leituras, { potencias = POTENCIA_PADRAO, tarifa = 0.85, fatore
   const br = (x, casas = 2) => x.toFixed(casas).replace(".", ",");
   const porComodoMes = doMes.reduce((s, d) => { for (const [k, v] of Object.entries(d.porComodo)) s[k] = (s[k] || 0) + v; return s; }, {});
   const [maiorK, maiorV] = Object.entries(porComodoMes).filter(([k]) => k !== "base").sort((a, b) => b[1] - a[1])[0] || ["", 0];
-  const NOME = { sala: "sala", cozinha: "cozinha", quarto: "quarto", externa: "luz externa" };
+  const NOME = { sala: "a sala", cozinha: "a cozinha", quarto: "o quarto", externa: "a luz externa", carregador: "o carregador do carro" };
+  const Nome = (k) => NOME[k][0].toUpperCase() + NOME[k].slice(1);
+  // V3: carro carregado entre 17h e 22h nos dias úteis (ponta + intermediária)
+  const carro = doMes.reduce((s, d) => ({ intermediaria: s.intermediaria + d.carro.intermediaria, ponta: s.ponta + d.carro.ponta }), { intermediaria: 0, ponta: 0 });
+  const carroCaro = carro.ponta + carro.intermediaria;
   let dica;
-  if (projecao > metaMensal) {
+  if (carroCaro >= 0.5) {
+    const agora$ = (carro.ponta * fatores.ponta + carro.intermediaria * fatores.intermediaria) * tarifa;
+    dica = `${br(carroCaro, 1)} kWh do carro foram carregados entre 17h e 22h em dia útil. Na tarifa branca essa carga custa ` +
+      `R$ ${br(agora$, 2)}; com "Só fora de ponta" ligado no carregador, cairia para R$ ${br(carroCaro * fatores.fora * tarifa, 2)}.`;
+  } else if (projecao > metaMensal) {
+    const corte = maiorK === "carregador"
+      ? `cada hora a menos de carga por dia economiza ~${br(((potencias.carregador * 30) / 1000), 0)} kWh/mês.`
+      : `apagar 1 h mais cedo por dia economiza ~${br(((potencias[maiorK] * 30) / 1000), 1)} kWh/mês.`;
     dica = `No ritmo atual o mês fecha em ${br(projecao, 1)} kWh, ${br((((projecao - metaMensal) / metaMensal) * 100), 0)}% acima da meta. ` +
-      (maiorV > 0 ? `A ${NOME[maiorK]} é quem mais gasta (${br(((maiorV / kMes) * 100), 0)}% do mês): apagar 1 h mais cedo por dia economiza ~${br(((potencias[maiorK] * 30) / 1000), 1)} kWh/mês.` : "");
+      (maiorV > 0 ? `${Nome(maiorK)} é quem mais gasta (${br(((maiorV / kMes) * 100), 0)}% do mês): ${corte}` : "");
   } else if (pctPonta >= 20) {
     const tudoFora = (fx.fora + fx.intermediaria + fx.ponta) * fatores.fora * tarifa;
     dica = `${br(pctPonta, 0)}% do consumo do mês foi no horário de ponta (18h–21h, dias úteis). Na tarifa branca a conta seria ` +
       `R$ ${br(branca, 2)} (convencional: R$ ${br(reais(kMes), 2)}); levando esse uso para depois das 22h, cairia para R$ ${br(tudoFora, 2)}.`;
   } else {
-    dica = `Dentro da meta: ${br(projecao, 1)} de ${metaMensal} kWh previstos no mês.` + (maiorV > 0 ? ` A ${NOME[maiorK]} responde por ${br(((maiorV / kMes) * 100), 0)}% do consumo.` : "");
+    dica = `Dentro da meta: ${br(projecao, 1)} de ${metaMensal} kWh previstos no mês.` + (maiorV > 0 ? ` ${Nome(maiorK)} responde por ${br(((maiorV / kMes) * 100), 0)}% do consumo.` : "");
   }
 
   return {
@@ -156,4 +172,4 @@ function calcular(leituras, { potencias = POTENCIA_PADRAO, tarifa = 0.85, fatore
   };
 }
 
-module.exports = { calcular, faixa, lerPares, COMODOS, POTENCIA_PADRAO, FATOR_BRANCA_PADRAO };
+module.exports = { calcular, faixa, lerPares, COMODOS, CARREGADOR, POTENCIA_PADRAO, FATOR_BRANCA_PADRAO };

@@ -22,6 +22,7 @@
  * PRESENCA_POLL_MS : leitura rápida só do V11 (padrão 500 ms) enquanto há página aberta (B5); 0 desliga.
  * CONSUMO_W, TARIFA_KWH, TARIFA_BRANCA, META_MENSAL_KWH : consumo e economia (I3, server/consumo.js).
  * CONSUMO_V15=1    : publica o consumo do dia (kWh) no V15 do Blynk a cada 5 min (depois de criar o datastream, K1).
+ * CARREGADOR_KW, BATERIA_KWH : carregador do carro elétrico (V3, server/carregador.js) — virtual, fora do protoboard.
  *
  * MODO AO VIVO     : BLYNK_TOKEN configurado no .env. O servidor lê os pinos
  *                    virtuais do seu dispositivo e envia cada mudança para a
@@ -101,7 +102,9 @@ app.use(express.json());
 // configuração lida pela casa 3D (mesma fonte do servidor: .env SENSORES)
 app.get("/js/config.js", (req, res) => {
   res.type("application/javascript").set("Cache-Control", "no-store");
-  res.send(`// gerado pelo servidor a partir do .env (SENSORES)\nexport const SENSORES = ${JSON.stringify(SENSORES)};\n`);
+  // modelo 3D opcional do carro (public/modelos/carro.glb): sem ele a casa usa o carro gerado em código
+  const MODELOS = { carro: require("fs").existsSync(path.join(__dirname, "public/modelos/carro.glb")) };
+  res.send(`// gerado pelo servidor a partir do .env (SENSORES) e da pasta public/modelos\nexport const SENSORES = ${JSON.stringify(SENSORES)};\nexport const MODELOS = ${JSON.stringify(MODELOS)};\n`);
 });
 app.use(express.static(path.join(__dirname, "public")));
 // three.js e fontes servidos localmente: a apresentação funciona sem internet
@@ -125,6 +128,7 @@ let state = {
   presenceAt: null, // B5: hora (ms) da última detecção do PIR — "última detecção há X s" na tela
   // luzes por cômodo, nível 0–100. O LED do D1 (V0) é a luz geral: aceso enquanto algum cômodo estiver aceso
   rooms: { sala: 0, cozinha: 0, quarto: 0, externa: 0 },
+  carro: null, // V3: carregador do carro elétrico (server/carregador.js), preenchido logo abaixo
   // no modo ao vivo começa vazio: a página mostra "--" até a primeira leitura real
   values: MODE === "live" ? {} : {
     V0: "0", V1: "0", V3: "1", V4: "24.0", V5: "58",
@@ -139,6 +143,7 @@ const clients = new Set();
 function broadcast() {
   syncLuzes(); // luz geral (D1) x cômodos — ver "Luzes por cômodo" abaixo
   registrarComodos();
+  registrarCarro();
   marcarPresenca();
   state.ts = Date.now();
   const payload = `event: state\ndata: ${JSON.stringify(state)}\n\n`;
@@ -452,11 +457,57 @@ app.post("/api/room", async (req, res) => {
   }
 });
 
+// ------------------------------------------------------------------
+// Carregador do carro elétrico (V3) — virtual, como os cômodos: não passa pela placa nem pelo Blynk.
+// No histórico: V24 carregando, V25 bateria %, V26 carro na garagem (ver server/carregador.js)
+// ------------------------------------------------------------------
+const { criarCarregador, PINOS: PINOS_CARRO } = require("./server/carregador");
+const CARREGADOR_KW = Number(process.env.CARREGADOR_KW) > 0 ? Number(process.env.CARREGADOR_KW) : 2.2;
+const carregador = criarCarregador({
+  kW: CARREGADOR_KW,
+  bateriaKWh: Number(process.env.BATERIA_KWH) > 0 ? Number(process.env.BATERIA_KWH) : 40,
+});
+state.carro = carregador.foto();
+// até ler o último estado do histórico (ao iniciar), nada é gravado: senão o padrão viraria uma leitura falsa
+let carroPronto = false;
+const carroGravado = {};
+function registrarCarro() {
+  if (!carroPronto) return;
+  const mudou = {}, antes = {};
+  for (const [pino, v] of Object.entries(carregador.pinos())) {
+    if (carroGravado[pino] !== v) { antes[pino] = carroGravado[pino]; mudou[pino] = carroGravado[pino] = v; }
+  }
+  if (Object.keys(mudou).length) historico.registrar(mudou, antes);
+}
+// aplica uma foto nova do carregador; "aguardando fora de ponta" vira evento (não é um pino)
+function atualizarCarro(foto, origem = "automatico") {
+  const antes = state.carro;
+  state.carro = foto;
+  if (foto.aguardando && !antes.aguardando && carroPronto) historico.evento("carregador", origem, "aguardando fora de ponta");
+  const { cheioEm: _a, ...x } = foto, { cheioEm: _b, ...y } = antes;
+  if (JSON.stringify(x) !== JSON.stringify(y)) broadcast();
+}
+// a bateria sobe e o horário fora de ponta chega sozinhos
+setInterval(() => atualizarCarro(carregador.tick()), 5000);
+
+app.post("/api/carregador", (req, res) => {
+  const { ligado, foraDePonta, origem: o } = req.body || {};
+  const origem = ["painel", "casa3d"].includes(o) ? o : "painel";
+  historico.comando(PINOS_CARRO.carregando, origem);
+  atualizarCarro(carregador.comando({ ligado, foraDePonta }), origem);
+  res.json({ ok: true, carro: state.carro });
+});
+
 const cenas = criarCenas({
-  // "luz:quarto" e afins = cômodos (acendem/apagam o D1 pela regra acima); "V…" = pino da placa
-  // no histórico, as mudanças da cena ficam com origem "cena"
+  // "luz:quarto" e afins = cômodos (acendem/apagam o D1 pela regra acima); "V…" = pino da placa;
+  // "carro:entrar|sair" = carro na garagem (V3). No histórico, as mudanças da cena ficam com origem "cena"
   async enviar(pin, value) {
     if (pin.startsWith("luz:")) return setRoom(pin.slice(4), value, "cena");
+    if (pin.startsWith("carro:")) {
+      historico.comando(PINOS_CARRO.naGaragem, "cena");
+      historico.comando(PINOS_CARRO.carregando, "cena"); // o cabo conecta/desconecta junto
+      return atualizarCarro(pin === "carro:entrar" ? carregador.entrar() : carregador.sair(), "cena");
+    }
     return comandar(pin, value, "cena");
   },
   aoMudar(cena) {
@@ -520,10 +571,12 @@ const lista = (txt) => (txt ? String(txt).split(",").map((x) => x.trim()).filter
 // ------------------------------------------------------------------
 const consumo = require("./server/consumo");
 const CONSUMO = {
-  potencias: consumo.lerPares(process.env.CONSUMO_W, consumo.POTENCIA_PADRAO),
+  // o carregador usa a mesma potência do server/carregador.js (CARREGADOR_KW)
+  potencias: { ...consumo.lerPares(process.env.CONSUMO_W, consumo.POTENCIA_PADRAO), carregador: CARREGADOR_KW * 1000 },
   tarifa: Number(process.env.TARIFA_KWH) > 0 ? Number(process.env.TARIFA_KWH) : 0.85,
   fatores: consumo.lerPares(process.env.TARIFA_BRANCA, consumo.FATOR_BRANCA_PADRAO),
-  metaMensal: Number(process.env.META_MENSAL_KWH) > 0 ? Number(process.env.META_MENSAL_KWH) : 25,
+  // padrão de uma casa pequena com carro elétrico (só as luzes ficam em ~10 kWh; o carro, ~120 kWh)
+  metaMensal: Number(process.env.META_MENSAL_KWH) > 0 ? Number(process.env.META_MENSAL_KWH) : 150,
 };
 async function calcularConsumo() {
   const agora = Date.now();
@@ -531,7 +584,7 @@ async function calcularConsumo() {
   const hoje0 = new Date(agora); hoje0.setHours(0, 0, 0, 0);
   // o mês todo e, no mínimo, 14 dias (para comparar com a semana anterior)
   const desde = Math.max(Math.min(mes0.getTime(), hoje0.getTime() - 13 * DIA_MS), agora - RETENCAO_DIAS * DIA_MS);
-  const leituras = await historico.leituras({ desde, ate: agora, pinos: ["V0", ...Object.values(consumo.COMODOS)] });
+  const leituras = await historico.leituras({ desde, ate: agora, pinos: ["V0", ...Object.values(consumo.COMODOS), consumo.CARREGADOR] });
   return consumo.calcular(leituras, { ...CONSUMO, agora });
 }
 app.get("/api/consumo", async (_req, res) => {
@@ -608,7 +661,15 @@ historico.iniciar()
   // B5: ao reiniciar, a "última detecção" vem do histórico (senão a tela ficaria sem ela até o próximo movimento)
   .then(() => historico.eventos({ desde: Date.now() - 7 * DIA_MS, ate: Date.now(), tipos: ["presenca"], limite: 1 }))
   .then((r) => { const ts = r?.eventos?.[0]?.ts; if (ts && !state.presenceAt) state.presenceAt = ts; })
-  .catch((err) => console.warn(`[historico] ao iniciar: ${err.message}`));
+  // V3: bateria, carro na garagem e carregador voltam como estavam
+  .then(() => historico.leituras({ desde: Date.now(), ate: Date.now(), pinos: Object.values(PINOS_CARRO) }))
+  .then((r) => {
+    const v = Object.fromEntries(Object.entries(r.antes).map(([p, [, valor]]) => [p, valor]));
+    Object.assign(carroGravado, Object.fromEntries(Object.entries(v).map(([p, x]) => [p, String(x)])));
+    state.carro = carregador.restaurar(v);
+  })
+  .catch((err) => console.warn(`[historico] ao iniciar: ${err.message}`))
+  .finally(() => { carroPronto = true; broadcast(); });
 // o Render manda SIGTERM a cada deploy: grava o que estiver na fila antes de sair
 for (const sinal of ["SIGTERM", "SIGINT"]) {
   process.once(sinal, () => historico.fechar().catch(() => {}).finally(() => process.exit(0)));

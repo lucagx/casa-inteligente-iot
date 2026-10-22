@@ -23,6 +23,8 @@ const ICON = {
   sair: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
   lua: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
   play: '<circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5z"/>',
+  plug: '<path d="M9 3v5M15 3v5"/><path d="M6 8h12v3a6 6 0 0 1-12 0z"/><path d="M12 17v4"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
 };
 const svg = (k) => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k]}</svg>`;
 
@@ -69,6 +71,17 @@ $('#lights').innerHTML = `
   </button>`
   + ROOMS.map((r) => tile(`room-${r.key}`, 'bulb', r.name, 'acende o D1')).join('');
 $('#devices').innerHTML = DEVICES.filter((d) => d !== luzGeral).map((d) => tile(`dev-${d.key}`, d.icon, d.name, d.hw)).join('');
+// V3: carregador do carro (faixa), bateria e "só fora de ponta"
+const faixa = (id, icon, name, hw) => `
+  <button class="device geral" id="${id}" type="button" aria-pressed="false">
+    <span class="dicon">${svg(icon)}</span>
+    <span class="dtext"><span class="dname">${name}</span><span class="dstate" id="st-${id}">--</span><span class="dhw">${hw}</span></span>
+    <span class="switch"><i></i></span>
+  </button>`;
+$('#ev').innerHTML = faixa('dev-carregador', 'plug', 'Carregador', 'virtual · fora do protoboard')
+  + `<div class="card evbat"><div class="row"><span class="k">Bateria do carro</span><b><span id="evPct">--</span><small>%</small></b></div>
+      <div class="bar"><i id="evBar"></i></div><p class="hint" id="evInfo"></p></div>`
+  + faixa('dev-ponta', 'clock', 'Só fora de ponta', 'espera as 22h nos dias úteis (tarifa branca)');
 
 const modeAuto = $('#modeAuto'), modeManual = $('#modeManual');
 const chipLink = $('#chipLink'), chipDev = $('#chipDev'), chipAge = $('#chipAge');
@@ -141,6 +154,56 @@ async function toggleRoom(r) {
   if (!(await sendRoom(r.key, want))) { delete pendingRoom[r.key]; render(); }
 }
 ROOMS.forEach((r) => $(`#room-${r.key}`).addEventListener('click', () => toggleRoom(r)));
+
+// ---------- carregador do carro (V3) ----------
+let pendingCarro = null; // { campo, want, until }
+async function sendCarro(campo, want) {
+  if (pendingCarro || !meta.carro) return;
+  pendingCarro = { campo, want, until: Date.now() + 4000 };
+  navigator.vibrate?.(12);
+  render();
+  try {
+    const r = await fetch('/api/carregador', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [campo]: want, origem: 'painel' }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  } catch (e) {
+    toast(`Não foi possível mudar o carregador: ${e.message}`, 'err');
+    pendingCarro = null;
+    render();
+  }
+}
+$('#dev-carregador').addEventListener('click', () => sendCarro('ligado', !meta.carro?.ligado));
+$('#dev-ponta').addEventListener('click', () => sendCarro('foraDePonta', !meta.carro?.foraDePonta));
+const kw = (x) => `${Number(x).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} kW`;
+const hm = (ts) => new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+function renderCarro() {
+  const c = meta.carro;
+  if (pendingCarro && (!c || c[pendingCarro.campo] === pendingCarro.want || Date.now() > pendingCarro.until)) pendingCarro = null;
+  const box = $('#ev');
+  box.classList.toggle('carregando', !!c?.carregando);
+  box.classList.toggle('aguardando', !!c?.aguardando);
+  box.classList.toggle('fora', !!c && !c.naGaragem);
+  for (const [id, campo] of [['dev-carregador', 'ligado'], ['dev-ponta', 'foraDePonta']]) {
+    const on = !!c?.[campo];
+    const el = $(`#${id}`);
+    el.classList.toggle('on', on);
+    el.classList.toggle('pending', pendingCarro?.campo === campo);
+    el.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  $('#st-dev-carregador').textContent = !c ? '--'
+    : pendingCarro?.campo === 'ligado' ? 'enviando…'
+    : !c.naGaragem ? (c.ligado ? 'Carro fora — carrega quando voltar' : 'Carro fora da garagem')
+    : c.carregando ? `Carregando · ${kw(c.kW)}`
+    : c.aguardando ? 'Aguardando o horário fora de ponta (22h)'
+    : c.ligado && c.bateria >= 100 ? 'Carga completa'
+    : c.ligado ? 'Ligado' : 'Desligado';
+  $('#st-dev-ponta').textContent = pendingCarro?.campo === 'foraDePonta' ? 'enviando…' : !c ? '--' : c.foraDePonta ? 'Ligado' : 'Desligado';
+  $('#evPct').textContent = c ? Math.floor(c.bateria) : '--';
+  $('#evBar').style.width = `${c ? c.bateria : 0}%`;
+  $('#evInfo').textContent = !c ? '' : c.carregando && c.cheioEm
+    ? `Completa às ${hm(c.cheioEm)}${new Date(c.cheioEm).toDateString() !== new Date().toDateString() ? ' de amanhã' : ''} · entra no consumo da casa`
+    : `Bateria de ${c.bateriaKWh} kWh · carregador de ${kw(c.kW)}. Depois das 22h a carga custa menos na tarifa branca.`;
+}
 
 // ---------- cenas de um toque (I4) ----------
 let scenes = [], loadingScenes = false;
@@ -268,6 +331,7 @@ function render() {
   $('#errBox').textContent = meta.error ? `Blynk: ${meta.error}` : '';
   if (online && !scenes.length) loadScenes();
   renderScenes();
+  renderCarro();
   tick();
 }
 

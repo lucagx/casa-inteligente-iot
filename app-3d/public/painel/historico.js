@@ -24,8 +24,10 @@ const TEXTO = {
   presenca: () => 'Presença detectada',
   placa: (d) => `NodeMCU ${d}`,
   cena: (d) => `Cena ${d}`,
+  carro: (d) => `Carro ${d === 'chegou' ? 'chegou à garagem' : 'saiu da garagem'}`,
+  carregador: (d) => (d === 'carregando' ? 'Carro carregando' : d === 'parado' ? 'Carga do carro parou' : `Carregador ${d}`),
 };
-const COR = { luz: 'amber', presenca: 'cyan', alarme: 'red', cena: 'cyan', placa: 'muted' };
+const COR = { luz: 'amber', presenca: 'cyan', alarme: 'red', cena: 'cyan', placa: 'muted', carregador: 'green', carro: 'muted' };
 const hora = (ts) => new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 const diaCurto = (ts) => new Date(ts).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit' }).replace('.', '');
 const inicioDoDia = (ts) => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); };

@@ -2,6 +2,8 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MODELOS } from './config.js';
 import * as TX from './textures.js';
 import { fmt } from './format.js';
 
@@ -1024,80 +1026,272 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   const carWheels = [];
   const carHeadMat = std({ color: 0xffffff, emissive: 0xdfefff, emissiveIntensity: 0.25 });
   const carTailMat = std({ color: 0x550000, emissive: 0xff2030, emissiveIntensity: 0.8 });
+  // V3: LED do wallbox e da porta de carga (cor = estado do carregador, ver update())
+  const evLedMat = std({ color: 0x222222, emissive: 0x5ee7ff, emissiveIntensity: 0 });
+  const evPortMat = std({ color: 0x1a1d22, emissive: 0x36e39a, emissiveIntensity: 0 });
+  let evCablePlug = null, evCableHolster = null;
+  const carGerado = new THREE.Group(); // carro gerado em código (some se houver modelos/carro.glb)
   {
     car.position.set(7.1, 0.05, 7.4);   // afastado do pilar da garagem (x = 8.15)
     car.scale.setScalar(0.88);
     car.rotation.y = Math.PI; // frente (faróis, +z local) virada para o fundo da garagem
-    // Carroceria por perfil lateral extrudado (capô, para-brisa, teto, porta-malas e caixas de roda),
-    // cabine de vidro separada e rodas de 5 raios. Frente = +z local.
-    const W = 1.8, ARCH = 0.45;
-    const sideShape = (pts, arches) => {
-      const sh = new THREE.Shape();
-      sh.moveTo(pts[0][0], pts[0][1]);
-      for (const [x, y] of pts.slice(1)) sh.lineTo(x, y);
-      // linha de baixo, de trás para a frente, recortando as caixas de roda (arco por cima da roda)
-      for (const cx of [...arches].sort((p, q) => p - q)) {
-        sh.lineTo(cx - ARCH, 0.34);
-        sh.absarc(cx, 0.34, ARCH, Math.PI, 0, true);
+    // Carro elétrico moderno (sedã fastback). Frente = +z local, comprimento ±2,27, largura 1,8.
+    // Carroceria: perfil lateral em curvas, extrudado com chanfro largo e depois deformado — arredondada em planta
+    // (frente e traseira afinam), lateral cheia na cintura e recolhida embaixo; estufa de vidro (teto panorâmico)
+    // mais estreita em cima. Pintura com verniz (clearcoat), para-lamas e soleiras pretos, frisos das portas,
+    // maçanetas embutidas, retrovisores, barras de luz de ponta a ponta e rodas aerodinâmicas.
+    const deforma = (g, { cintura = 0.62, estufa = false } = {}) => {
+      const pos = g.attributes.position;
+      for (let k = 0; k < pos.count; k++) {
+        let x = pos.getX(k);
+        const y = pos.getY(k), z = pos.getZ(k);
+        const t = THREE.MathUtils.clamp((Math.abs(z) - 1.6) / 0.7, 0, 1);
+        x *= 1 - 0.11 * t * t;                                                    // planta arredondada
+        if (estufa) x *= 1 - 0.3 * THREE.MathUtils.clamp((y - 0.9) / 0.55, 0, 1); // vidros inclinados para dentro
+        else x *= 1 - 0.08 * Math.min(1, ((y - cintura) / 0.4) ** 2);            // lateral cheia na cintura
+        pos.setX(k, x);
       }
-      sh.lineTo(pts[0][0], pts[0][1]);
-      return sh;
-    };
-    const extrudeCar = (shape, width, bevel, mat) => {
-      const g = new THREE.ExtrudeGeometry(shape, { depth: width - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 4, curveSegments: 18 });
-      g.rotateY(-Math.PI / 2);                  // comprimento do perfil → eixo z do carro
-      g.translate((width - bevel * 2) / 2, 0, 0);
+      // normais suaves: a extrusão vem sem índice (cada face com a sua normal = facetas)
+      g.deleteAttribute('normal');
+      g = mergeVertices(g);
       g.computeVertexNormals();
-      const m = shadowed(new THREE.Mesh(g, mat));
+      return g;
+    };
+    const extrude = (shape, width, bevel, mat, opts) => {
+      const g = new THREE.ExtrudeGeometry(shape, { depth: width - bevel * 2, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 6, curveSegments: 24 });
+      g.rotateY(-Math.PI / 2);                  // comprimento do perfil → eixo z do carro
+      g.translate((width - bevel * 2) / 2 + (opts?.dx || 0), 0, 0); // dx: painel deslocado para um lado (portas)
+      const m = shadowed(new THREE.Mesh(deforma(g, opts), mat));
       car.add(m);
       return m;
     };
-    // corpo (até a linha de cintura)
-    extrudeCar(sideShape([[2.2, 0.34], [2.26, 0.6], [2.12, 0.8], [1.6, 0.88], [0.95, 0.98], [-1.55, 0.98], [-2.12, 0.92], [-2.27, 0.66], [-2.22, 0.34]], [1.4, -1.45]), W, 0.08, M.carPaint);
-    // cabine (vidros escuros) com para-brisa inclinado e caída do teto em fastback
+    const ARCH = 0.45, RODAS = [1.4, -1.45];
+    let corpo;
+    // corpo até a linha de cintura: para-choque traseiro, tampa curta, cintura subindo para trás, capô baixo
+    {
+      const sh = new THREE.Shape();
+      sh.moveTo(-2.16, 0.32);
+      sh.quadraticCurveTo(-2.27, 0.36, -2.27, 0.5);                    // traseira reta (Kamm), cantos arredondados
+      sh.lineTo(-2.26, 0.84);
+      sh.quadraticCurveTo(-2.24, 0.97, -2.0, 0.98);                    // borda da tampa (spoiler embutido)
+      // habitáculo aberto entre a tampa e o para-brisa (o corpo desce até o assoalho; as portas vêm abaixo)
+      sh.lineTo(-1.66, 0.975);
+      sh.lineTo(-1.6, 0.5);
+      sh.lineTo(0.92, 0.5);
+      sh.lineTo(1.0, 0.9);                                             // base do para-brisa
+      sh.bezierCurveTo(1.5, 0.87, 1.95, 0.8, 2.15, 0.7);               // capô baixo
+      sh.bezierCurveTo(2.3, 0.62, 2.3, 0.42, 2.2, 0.32);               // bico arredondado
+      for (const cx of [...RODAS].sort((a, b) => b - a)) {             // linha de baixo, da frente para trás, com as caixas de roda
+        sh.lineTo(cx + ARCH, 0.32);
+        sh.absarc(cx, 0.34, ARCH, 0, Math.PI, false);
+      }
+      sh.lineTo(-2.16, 0.32);
+      corpo = extrude(sh, 1.8, 0.1, M.carPaint);
+      // portas: painéis laterais da cintura até o assoalho, dos dois lados do habitáculo
+      const porta = new THREE.Shape();
+      porta.moveTo(-1.64, 0.45); porta.lineTo(-1.64, 0.975); porta.lineTo(0.96, 0.9); porta.lineTo(0.96, 0.45); porta.closePath();
+      for (const sx of [-1, 1]) extrude(porta, 0.12, 0.03, M.carPaint, { dx: sx * 0.84 });
+    }
+    // o chanfro engorda o contorno: frente/traseira de verdade vêm da caixa da malha (detalhes encostam nela)
+    corpo.geometry.computeBoundingBox();
+    const zT = corpo.geometry.boundingBox.min.z, zF = corpo.geometry.boundingBox.max.z;
+    // estufa de vidro: para-brisa bem inclinado, teto panorâmico e caimento fastback até a tampa
     {
       const c = new THREE.Shape();
-      c.moveTo(0.98, 0.95); c.lineTo(0.18, 1.4); c.lineTo(-0.95, 1.42); c.quadraticCurveTo(-1.55, 1.3, -1.98, 0.95); c.closePath();
-      extrudeCar(c, 1.56, 0.07, M.tinted);
-      // teto na cor da carroceria + colunas
-      const roof = new THREE.Shape();
-      roof.moveTo(0.12, 1.4); roof.lineTo(-0.98, 1.425); roof.quadraticCurveTo(-1.3, 1.39, -1.45, 1.3); roof.lineTo(-1.35, 1.36); roof.lineTo(-0.98, 1.455); roof.lineTo(0.14, 1.445); roof.closePath();
-      extrudeCar(roof, 1.5, 0.03, M.carPaint);
-      for (const sx of [-1, 1]) box(car, 0.03, 0.42, 0.1, M.carPaint, sx * 0.74, 1.17, -0.32, { cast: false }); // coluna B
+      c.moveTo(1.02, 0.88);
+      c.bezierCurveTo(0.6, 1.12, 0.3, 1.38, 0.0, 1.42);
+      c.bezierCurveTo(-0.6, 1.47, -1.15, 1.4, -1.55, 1.18);
+      c.quadraticCurveTo(-1.8, 1.04, -1.92, 0.95);
+      c.lineTo(1.02, 0.88);
+      // vidro transparente (dá para ver o interior), com reflexo e verniz
+      const vidro = new THREE.MeshPhysicalMaterial({ color: 0x030405, metalness: 0, roughness: 0.05, transparent: true, opacity: 0.74, side: THREE.DoubleSide, specularIntensity: 0.25, ior: 1.2,
+        envMapIntensity: 0.4, depthWrite: false });
+      const est = extrude(c, 1.62, 0.1, vidro, { estufa: true });
+      est.castShadow = false;
+      est.renderOrder = 2;
     }
-    // para-choques, saia, placas e retrovisores
-    box(car, 1.7, 0.16, 0.12, M.black, 0, 0.42, 2.22, { round: 0.04 });
-    box(car, 1.7, 0.16, 0.12, M.black, 0, 0.44, -2.24, { round: 0.04 });
-    box(car, 1.5, 0.12, 3.0, M.black, 0, 0.32, 0, { cast: false });
-    box(car, 0.46, 0.11, 0.02, M.whitePlastic, 0, 0.6, -2.29, { cast: false });
-    box(car, 0.46, 0.11, 0.02, M.whitePlastic, 0, 0.52, 2.28, { cast: false });
-    for (const sx of [-1, 1]) {
-      box(car, 0.16, 0.08, 0.1, M.carPaint, sx * 0.98, 1.0, 0.82, { round: 0.03 });
-      box(car, 0.02, 0.012, 0.2, M.steel, sx * 0.91, 0.85, -0.2, { cast: false }); // maçaneta
-    }
-    for (const [x, z] of [[-0.8, 1.4], [0.8, 1.4], [-0.8, -1.45], [0.8, -1.45]]) {
-      // roda num grupo próprio para girar conforme o carro anda
-      const wg = new THREE.Group();
-      wg.position.set(x, 0.36, z);
-      car.add(wg);
-      const w = cyl(wg, 0.36, 0.36, 0.26, M.rubber, 0, 0, 0, 32);
-      w.rotation.z = Math.PI / 2;
-      const rim = cyl(wg, 0.24, 0.24, 0.27, M.steel, 0, 0, 0, 24);
-      rim.rotation.z = Math.PI / 2;
-      const hub = cyl(wg, 0.07, 0.07, 0.28, M.frame, 0, 0, 0, 12);
-      hub.rotation.z = Math.PI / 2;
-      for (let k = 0; k < 5; k++) { // raios escuros: deixam a rotação visível
-        const sp = box(wg, 0.28, 0.06, 0.04, M.frame, Math.sign(x) * 0.02, 0, 0, { cast: false });
-        sp.rotation.x = (k / 5) * Math.PI;
+    // interior visto pelos vidros: assoalho, bancos, painel, tela central e volante (motorista à esquerda = +x)
+    {
+      const banco = std({ color: 0x2a2d31, roughness: 0.85 });
+      const acab = std({ color: 0xd8d2c6, roughness: 0.7 });
+      box(car, 1.45, 0.06, 2.6, banco, 0, 0.62, -0.25, { cast: false });                 // assoalho
+      for (const [x, z] of [[0.38, 0.05], [-0.38, 0.05]]) {
+        box(car, 0.5, 0.12, 0.5, banco, x, 0.72, z, { round: 0.05, cast: false });       // assento
+        const enc = box(car, 0.48, 0.6, 0.12, banco, x, 1.02, z - 0.3, { round: 0.05, cast: false });
+        enc.rotation.x = -0.22;
+        box(car, 0.24, 0.12, 0.08, banco, x, 1.38, z - 0.38, { round: 0.03, cast: false }); // encosto de cabeça
       }
-      carWheels.push(wg);
+      box(car, 1.3, 0.12, 0.45, banco, 0, 0.74, -0.95, { round: 0.05, cast: false });    // banco traseiro
+      const encT = box(car, 1.3, 0.5, 0.12, banco, 0, 1.0, -1.2, { round: 0.05, cast: false });
+      encT.rotation.x = -0.28;
+      box(car, 1.4, 0.16, 0.3, banco, 0, 0.94, 0.78, { round: 0.04, cast: false });      // painel
+      box(car, 1.36, 0.025, 0.04, acab, 0, 0.99, 0.64, { cast: false });                 // friso claro do painel
+      const tela = box(car, 0.34, 0.22, 0.02, std({ color: 0x0b1118, emissive: 0x3a7bd5, emissiveIntensity: 0.35, roughness: 0.2 }), 0, 1.1, 0.62, { cast: false });
+      tela.rotation.x = -0.25;
+      const volante = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.022, 8, 24), banco);
+      volante.position.set(0.38, 1.02, 0.52); volante.rotation.x = -0.45;
+      car.add(volante);
+      box(car, 0.2, 0.06, 0.4, banco, 0, 0.78, 0.25, { round: 0.03, cast: false });     // console central
     }
-    // faróis em barra (frente) e lanterna contínua (traseira)
-    const head = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.05, 0.03), carHeadMat);
-    head.position.set(0, 0.79, 2.21); car.add(head);
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.06, 0.03), carTailMat);
-    tail.position.set(0, 0.84, -2.21); car.add(tail);
+    const preto = std({ color: 0x15171a, roughness: 0.75 });
+    const brilho = std({ color: 0x0c0d0f, roughness: 0.25, metalness: 0.3 });
+    for (const sx of [-1, 1]) {
+      // soleira preta entre as rodas e molduras das caixas de roda
+      box(car, 0.05, 0.1, 1.9, preto, sx * 0.86, 0.36, -0.03, { cast: false, round: 0.02 });
+      for (const cz of RODAS) {
+        const arco = new THREE.Mesh(new THREE.TorusGeometry(ARCH + 0.02, 0.035, 6, 20, Math.PI), preto);
+        arco.rotation.y = sx * Math.PI / 2;
+        arco.position.set(sx * 0.82, 0.34, cz);
+        car.add(arco);
+      }
+      // frisos das portas (dianteira/traseira) e maçanetas embutidas
+      for (const z of [0.98, -0.25, -1.3]) box(car, 0.012, 0.46, 0.012, brilho, sx * 0.875, 0.68, z, { cast: false });
+      for (const z of [0.45, -0.75]) box(car, 0.012, 0.025, 0.2, M.steel, sx * 0.88, 0.84, z, { cast: false });
+      // retrovisor tipo câmera
+      box(car, 0.1, 0.03, 0.05, brilho, sx * 0.86, 0.96, 0.82, { cast: false });
+      box(car, 0.07, 0.08, 0.16, M.carPaint, sx * 0.94, 0.98, 0.82, { round: 0.03 });
+    }
+    // frente lisa (sem grade): entrada de ar baixa preta e sensor; traseira com difusor
+    box(car, 1.2, 0.1, 0.1, brilho, 0, 0.42, zF - 0.06, { round: 0.04, cast: false });  // entrada de ar
+    box(car, 1.3, 0.12, 0.08, preto, 0, 0.4, zT + 0.02, { round: 0.03, cast: false });   // difusor
+    box(car, 0.36, 0.11, 0.02, M.whitePlastic, 0, 0.6, zT - 0.008, { cast: false });       // placa
+    box(car, 1.5, 0.1, 0.02, brilho, 0, 0.86, zT + 0.002, { cast: false });               // faixa preta da lanterna
+    for (const cz of RODAS) {
+      for (const sx of [-0.8, 0.8]) {
+        // roda num grupo próprio para girar conforme o carro anda: pneu com flanco arredondado, aro e tampa aerodinâmica
+        const wg = new THREE.Group();
+        wg.position.set(sx, 0.36, cz);
+        car.add(wg);
+        const pneu = shadowed(new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.095, 12, 36), M.rubber));
+        pneu.rotation.y = Math.PI / 2;
+        wg.add(pneu);
+        const aro = cyl(wg, 0.27, 0.27, 0.2, M.steel, 0, 0, 0, 36);
+        aro.rotation.z = Math.PI / 2;
+        const tampa = cyl(wg, 0.24, 0.24, 0.205, M.frame, 0, 0, 0, 36); // face escura (aero)
+        tampa.rotation.z = Math.PI / 2;
+        for (let k = 0; k < 5; k++) { // raios claros sobre a tampa: deixam a rotação visível
+          const sp = box(wg, 0.215, 0.05, 0.03, M.steel, Math.sign(sx) * 0.006, 0, 0, { cast: false });
+          sp.position.y = 0; sp.rotation.x = (k / 5) * Math.PI;
+        }
+        const cubo = cyl(wg, 0.05, 0.05, 0.22, brilho, 0, 0, 0, 16);
+        cubo.rotation.z = Math.PI / 2;
+        carWheels.push(wg);
+      }
+    }
+    // barras de luz de ponta a ponta (frente e traseira)
+    const head = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.03, 0.03), carHeadMat);
+    head.position.set(0, 0.63, zF - 0.035); car.add(head);
+    for (const sx of [-1, 1]) {
+      const farol = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.07, 0.03), carHeadMat);
+      farol.position.set(sx * 0.6, 0.6, zF - 0.06); farol.rotation.y = sx * -0.35; car.add(farol);
+    }
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(1.46, 0.04, 0.02), carTailMat);
+    tail.position.set(0, 0.87, zT - 0.01); car.add(tail);
+    for (const sx of [-1, 1]) { // lanternas que dobram para a lateral
+      const l = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.06, 0.22), carTailMat);
+      l.position.set(sx * 0.76, 0.87, zT + 0.12); l.rotation.y = sx * 0.5; car.add(l);
+    }
+    // V3: a porta de carga (para-lama dianteiro, lado da parede) é criada logo abaixo, fora do carro gerado
+    // tudo o que foi montado até aqui é o carro gerado; a porta de carga fica fora (vale para os dois)
+    for (const c of [...car.children]) carGerado.add(c);
+    car.add(carGerado);
+    box(car, 0.03, 0.09, 0.13, evPortMat, 0.865, 0.6, 1.98, { cast: false });
     root.add(car);
+    if (MODELOS.carro) carregarCarro();
+  }
+  // V3: modelo 3D de um carro de verdade (glTF, public/modelos/carro.glb), se existir — ver README
+  // Ajusta sozinho: comprimento igual ao do carro gerado, centralizado, rodas no chão. Vidros viram vidro preto
+  // transparente; rodas (nós com wheel/roda/tire/pneu/rim no nome) giram quando o carro anda.
+  // ?carroGiro=180 vira o modelo se a frente vier ao contrário.
+  function carregarCarro() {
+    new GLTFLoader().load('/modelos/carro.glb', (gltf) => {
+      const m = gltf.scene;
+      const giro = Number(new URLSearchParams(location.search).get('carroGiro')) || 0;
+      let caixa = new THREE.Box3().setFromObject(m), tam = caixa.getSize(new THREE.Vector3());
+      if (tam.x > tam.z) m.rotation.y = Math.PI / 2;  // comprimento no eixo z do carro
+      m.rotation.y += THREE.MathUtils.degToRad(giro);
+      m.updateMatrixWorld(true);
+      caixa = new THREE.Box3().setFromObject(m); tam = caixa.getSize(new THREE.Vector3());
+      const esc = 4.54 / tam.z;
+      m.scale.multiplyScalar(esc);
+      m.updateMatrixWorld(true);
+      caixa = new THREE.Box3().setFromObject(m);
+      const centro = caixa.getCenter(new THREE.Vector3());
+      m.position.sub(new THREE.Vector3(centro.x, caixa.min.y, centro.z));
+      const vidro = new THREE.MeshPhysicalMaterial({ color: 0x030405, roughness: 0.05, transparent: true, opacity: 0.74, specularIntensity: 0.25, ior: 1.2, envMapIntensity: 0.4, depthWrite: false });
+      const rodas = [];
+      m.traverse((o) => {
+        if (o.isMesh) {
+          o.castShadow = true; o.receiveShadow = true;
+          const nome = `${o.name} ${o.material?.name || ''}`.toLowerCase();
+          if (/glass|vidro|window|janela|windshield/.test(nome) || (o.material?.transparent && o.material.opacity < 0.9)) { o.material = vidro; o.castShadow = false; o.renderOrder = 2; }
+        }
+        if (/wheel|roda|tire|tyre|pneu|rim/i.test(o.name) && !rodas.some((r) => r.getObjectById(o.id))) rodas.push(o);
+      });
+      car.add(m);
+      car.updateMatrixWorld(true);
+      // cada roda num pivô no próprio centro (o nó do modelo nem sempre gira em torno do eixo)
+      const rodasPivos = [];
+      for (const r of rodas.filter((r) => !rodas.some((o) => o !== r && o.getObjectById(r.id)))) {
+        const c = new THREE.Box3().setFromObject(r).getCenter(new THREE.Vector3());
+        const pivo = new THREE.Group();
+        pivo.position.copy(car.worldToLocal(c.clone()));
+        car.add(pivo);
+        pivo.attach(r);
+        rodasPivos.push(pivo);
+      }
+      carGerado.visible = false;
+      carWheels.length = 0;
+      carWheels.push(...rodasPivos);
+      S.atualizaSombra = 3; // sombra nova com o modelo (main.js atualiza enquanto S.moving)
+      console.log(`[casa3d] modelo do carro carregado (${rodasPivos.length} rodas)`);
+    }, undefined, (e) => console.warn(`[casa3d] modelo do carro não carregou, usando o gerado: ${e.message || e}`));
+  }
+
+  // V3: carregador do carro elétrico (wallbox) na parede leste, ao lado da vaga. Virtual: vem de state.carro.
+  // Tela com a % da bateria (canvas redesenhado só quando muda) e barra de LED; cabo ligado no carro
+  // quando ele está na vaga, enrolado no suporte quando não está. Sem luzes novas (tudo emissivo).
+  const evScreenCanvas = document.createElement('canvas');
+  evScreenCanvas.width = 256; evScreenCanvas.height = 128;
+  const evScreenTex = new THREE.CanvasTexture(evScreenCanvas);
+  evScreenTex.colorSpace = THREE.SRGBColorSpace;
+  let evSig = '';
+  function drawEvScreen(c) {
+    const pct = c ? Math.floor(c.bateria) : null;
+    const st = !c ? '--' : !c.naGaragem ? 'SEM CARRO' : c.carregando ? `${String(c.kW).replace('.', ',')} kW` : c.aguardando ? 'FORA DE PONTA' : c.ligado && pct >= 100 ? 'COMPLETA' : 'PRONTO';
+    const sig = `${pct}|${st}`;
+    if (sig === evSig) return;
+    evSig = sig;
+    const g = evScreenCanvas.getContext('2d'), W = 256, Hh = 128;
+    g.fillStyle = '#05080d'; g.fillRect(0, 0, W, Hh);
+    const cor = c?.carregando ? '#36e39a' : c?.aguardando ? '#ffc27a' : '#5ee7ff';
+    g.fillStyle = cor; g.font = '700 58px "DM Sans", sans-serif'; g.textAlign = 'center';
+    g.fillText(pct === null ? '--' : `${pct}%`, W / 2, 66);
+    g.strokeStyle = 'rgba(255,255,255,0.25)'; g.lineWidth = 3; g.strokeRect(28, 80, W - 56, 14);
+    g.fillRect(31, 83, (W - 62) * ((pct ?? 0) / 100), 8);
+    g.fillStyle = '#9fb4cc'; g.font = '600 20px "DM Sans", sans-serif'; g.fillText(st, W / 2, 118);
+    evScreenTex.needsUpdate = true;
+  }
+  {
+    const x0 = 6.0 + T / 2, zc = 2.25, yc = FL + 1.05;
+    box(root, 0.12, 0.44, 0.32, M.whitePlastic, x0 + 0.06, yc, zc, { round: 0.04 });
+    box(root, 0.02, 0.36, 0.24, M.frame, x0 + 0.125, yc + 0.01, zc, { round: 0.008, cast: false });
+    const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.1), std({ color: 0x000000, emissive: 0xffffff, emissiveMap: evScreenTex, emissiveIntensity: 0.9 }));
+    scr.position.set(x0 + 0.137, yc + 0.07, zc); scr.rotation.y = Math.PI / 2;
+    root.add(scr);
+    box(root, 0.012, 0.025, 0.16, evLedMat, x0 + 0.137, yc - 0.06, zc, { cast: false }); // barra de LED de status
+    box(root, 0.05, 0.05, 0.06, M.frame, x0 + 0.03, yc - 0.3, zc + 0.24); // suporte do conector
+    anchor('carregador', x0 + 0.1, yc + 0.4, zc);
+    // cabo: dois traçados fixos; liga um ou outro (sem recriar geometria a cada quadro)
+    const tubo = (pts) => {
+      const g = new THREE.Group(); g.userData.dynamic = true;
+      g.add(shadowed(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(...p))), 40, 0.017, 8), M.black), true, false));
+      root.add(g);
+      return g;
+    };
+    // porta de carga do carro na vaga (V3 abaixo): x = 7,1 − 0,915·0,88; z = 3,55 − 1,98·0,88
+    evCablePlug = tubo([[x0 + 0.06, yc - 0.22, zc], [x0 + 0.1, 0.45, zc - 0.05], [x0 + 0.13, 0.07, 2.0], [6.24, 0.2, 1.84], [6.27, 0.52, 1.81]]);
+    evCableHolster = tubo([[x0 + 0.06, yc - 0.22, zc], [x0 + 0.08, 0.55, zc + 0.05], [x0 + 0.09, 0.38, zc + 0.2], [x0 + 0.06, yc - 0.33, zc + 0.24]]);
   }
 
   // folhagem realista: miolo escuro + centenas de cartões de folhas com recorte alfa
@@ -1546,7 +1740,9 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     if (v.V11 === '1' && S.presenceT === 0) S.presenceHold = performance.now() + 3000;
     S.presenceT = v.V11 === '1' ? 1 : 0;
     S.dist = v.V12 === undefined || v.V12 === '' ? NaN : Number(v.V12);
-    S.gapT = distToGap(S.dist);
+    S.ev = meta.carro || null; // V3: carregador e carro na garagem (server/carregador.js)
+    S.gapT = S.ev && !S.ev.naGaragem ? CAR_FORA : distToGap(S.dist);
+    drawEvScreen(S.ev);
     if (!S.gotState) { S.gap = S.gapT; S.gotState = true; } // ao abrir, o carro já aparece onde está
     S.online = !!meta.deviceOnline;
     lockLedMat.color.set(S.doorT ? 0x36e39a : 0xff3b55);
@@ -1557,6 +1753,8 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   }
   // cm medidos pelo HC-SR04 → metros entre o sensor e o para-choque na cena.
   // Na maquete o carrinho trabalha entre ~5 e 100 cm; acima disso a vaga está livre.
+  // V3: carro fora (cena Saí): vai até o fim da calçada e some; na cena Cheguei volta de lá até a vaga
+  const CAR_FORA = 9;
   function distToGap(cm) {
     if (!sensores.garagem) return 0.6;   // sem HC-SR04: carro estacionado no fundo da vaga
     if (!Number.isFinite(cm)) return 6;
@@ -1584,7 +1782,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     if (Math.floor(Date.now() / 60000) !== tvMinute) drawTV();
 
     // sombras só são recalculadas quando algo que projeta sombra se move (ver main.js)
-    S.moving = Math.abs(S.door - S.doorT) > 1e-3 || Math.abs(S.win - S.winT) > 1e-3 || Math.abs(S.gap - S.gapT) > 1e-3;
+    S.moving = Math.abs(S.door - S.doorT) > 1e-3 || Math.abs(S.win - S.winT) > 1e-3 || Math.abs(S.gap - S.gapT) > 1e-3 || (S.atualizaSombra > 0 && S.atualizaSombra-- > 0);
 
     // porta (V1) — abre para dentro
     S.door = damp(S.door, S.doorT, 3.2, dt);
@@ -1648,6 +1846,17 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
       sonarBeam.position.set(0, 0.7, 0.15 + S.gap / 2);
     }
     sonarMat.opacity = S.online && zone >= 0 ? 0.05 + 0.04 * Math.sin(t * 12) : 0.012;
+
+    // V3: carro some no fim da calçada; cabo no carro só com ele parado na vaga; LED pela situação da carga
+    car.visible = !(S.gapT >= CAR_FORA && S.gap > CAR_FORA - 1.2);
+    const ev = S.ev;
+    const naVaga = !!ev?.naGaragem && Math.abs(S.gap - S.gapT) < 0.05;
+    if (evCablePlug) { evCablePlug.visible = naVaga; evCableHolster.visible = !naVaga; }
+    const evCor = !ev || !naVaga ? null : ev.carregando ? 0x36e39a : ev.aguardando ? 0xffb020 : 0x5ee7ff;
+    const evPulso = ev?.carregando ? 0.55 + 0.45 * Math.sin(t * 3) : 1;
+    if (evCor !== null) { evLedMat.emissive.setHex(evCor); evPortMat.emissive.setHex(evCor); }
+    evLedMat.emissiveIntensity = evCor === null ? 0.15 : 1.8 * evPulso;
+    evPortMat.emissiveIntensity = evCor === null ? 0 : 1.4 * evPulso;
 
     // NodeMCU: pulsação enquanto conectado
     const beat = Math.pow(Math.max(0, Math.sin(t * 3.0)), 12);

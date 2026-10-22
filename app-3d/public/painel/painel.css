@@ -122,8 +122,8 @@ body.offline .scene { opacity: 0.45; pointer-events: none; }
 #devices .device:last-child:nth-child(odd) { grid-column: span 2; }
 #lights .device { min-height: 112px; }
 /* luz geral (D1) ocupa a linha toda, em formato de faixa */
-#lights .geral { grid-column: span 2; min-height: 0; flex-direction: row; align-items: center; justify-content: flex-start; gap: 14px; }
-#lights .geral .switch { margin-left: auto; flex: none; }
+.devices .geral { grid-column: span 2; min-height: 0; flex-direction: row; align-items: center; justify-content: flex-start; gap: 14px; }
+.devices .geral .switch { margin-left: auto; flex: none; }
 .device:focus-visible, .seg button:focus-visible, .ibtn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .drow { display: flex; width: 100%; align-items: center; justify-content: space-between; }
 .dicon { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 13px; background: rgba(255, 255, 255, 0.06); color: var(--muted); transition: background .3s, color .3s, box-shadow .3s; }
@@ -147,6 +147,20 @@ body.offline .scene { opacity: 0.45; pointer-events: none; }
 .device.firing { border-color: var(--red); background: rgba(255, 77, 106, 0.16); animation: firing .5s steps(2) infinite; }
 .device.firing .dstate { color: #ffd1d8; font-weight: 700; }
 @keyframes firing { 50% { background: rgba(255, 77, 106, 0.32); } }
+
+/* V3: carregador do carro — bateria grande e estado (carregando / aguardando a ponta / carro fora) */
+.evbat { grid-column: span 2; display: flex; flex-direction: column; gap: 8px; }
+.evbat .row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.evbat .k { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.evbat b { font-family: var(--display); font-size: 30px; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.evbat b small { font-family: var(--body); font-weight: 400; font-size: 14px; color: var(--muted); margin-left: 2px; }
+.evbat .bar { height: 10px; margin-top: 0; }
+.evbat .bar i { background: linear-gradient(90deg, #2fbf7f, var(--green)); }
+.ev.carregando .evbat .bar i { animation: breathe 1.6s ease-in-out infinite; }
+#dev-carregador.on .dicon { background: var(--green); box-shadow: 0 0 24px rgba(54, 227, 154, 0.4); }
+.ev.aguardando #dev-carregador .dicon { background: var(--amber); box-shadow: 0 0 24px rgba(255, 194, 122, 0.45); }
+.ev.fora #dev-carregador .dicon { background: rgba(255, 255, 255, 0.06); color: var(--muted); box-shadow: none; }
+#dev-ponta.on .dicon { background: var(--cyan); box-shadow: 0 0 24px rgba(94, 231, 255, 0.4); }
 
 /* sem servidor: controles ficam visíveis mas não respondem */
 body.offline .device, body.offline .seg { opacity: 0.45; pointer-events: none; }
@@ -224,6 +238,7 @@ body { padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
 .timeline .ev.amber { border-left-color: var(--amber); }
 .timeline .ev.cyan { border-left-color: var(--cyan); }
 .timeline .ev.red { border-left-color: var(--red); }
+.timeline .ev.green { border-left-color: var(--green); }
 .timeline .ev.novo { animation: novo 1.6s ease; }
 @keyframes novo { from { background: rgba(94, 231, 255, 0.18); } }
 .timeline time { font-family: var(--mono); font-size: 12px; color: var(--ink); display: flex; flex-direction: column; line-height: 1.2; }

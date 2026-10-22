@@ -223,6 +223,7 @@ body.ready .dock-bar { opacity: 1; }
 .ev:nth-child(n+5) { opacity: 0.3; }
 .ev time { font-family: var(--mono); font-size: 10.5px; color: var(--faint); flex: none; }
 .ev.amber span { color: var(--amber); } .ev.cyan span { color: var(--cyan); } .ev.red span { color: #ff9fae; }
+.ev.green span { color: var(--green, #36e39a); }
 @keyframes evIn { from { opacity: 0; transform: translateY(8px); } }
 .feed-rows { display: flex; flex-direction: column; gap: 6px; }
 .feed-toggle {

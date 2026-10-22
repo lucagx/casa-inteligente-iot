@@ -109,7 +109,30 @@ por cômodo, consumo do mês por cômodo e a simulação da **tarifa branca** (p
 - Potências de uma casa real equivalente (o protoboard gasta miliwatts): `CONSUMO_W`, `TARIFA_KWH`,
   `TARIFA_BRANCA`, `META_MENSAL_KWH` (ver `.env.example`).
 - `CONSUMO_V15=1` publica o consumo do dia no V15 do Blynk a cada 5 min — ligar depois de criar o datastream (K1).
-- O carregador do carro (V3, M4) entra aqui quando existir.
+- O carregador do carro (V3) entra no total, nos 7 dias, por cômodo e na tarifa branca; a dica avisa quando o carro
+  carregou entre 17h e 22h em dia útil e quanto custaria com "Só fora de ponta".
+
+### Carro elétrico e carregador (V3)
+
+O HC-SR04 saiu do protoboard, então o carro virou parte do IoB de consumo: um **carregador virtual** (não existe
+na placa nem no Blynk ainda) que vive no servidor (`server/carregador.js`, `state.carro`), como as luzes por cômodo.
+
+- Só carrega com o carro na garagem. A bateria sobe com a energia que entra: `CARREGADOR_KW` (padrão 2,2 kW,
+  carregador portátil) ÷ `BATERIA_KWH` (padrão 40 kWh) ≈ 5,5 % por hora; para sozinho em 100 %.
+- **Só fora de ponta:** com o carregador ligado, espera as 22h nos dias úteis (o fim de semana inteiro é fora de ponta).
+- Cenas: **Cheguei** começa com o carro entrando na garagem (o cabo conecta); **Saí** termina com o carro saindo
+  (a carga para). Ao voltar, a bateria está mais baixa (3 % + 1 % por hora fora, no máximo 25 %).
+- Histórico: **V24** carregando (0/1), **V25** bateria (%), **V26** carro na garagem; eventos `carregador`
+  (carregando, parado, aguardando fora de ponta) e `carro` (chegou, saiu). Ao reiniciar, o estado volta do histórico.
+- Casa 3D: wallbox na parede leste da garagem com tela da bateria e LED (azul conectado, âmbar aguardando,
+  verde pulsando carregando), cabo até a porta de carga do carro e hotspot. Painel do celular: bloco "Carro elétrico".
+- API: `POST /api/carregador {"ligado":true}` ou `{"foraDePonta":true}` (opcional `"origem":"painel"|"casa3d"`).
+- **Modelo 3D do carro (opcional):** coloque um carro em glTF binário em `public/modelos/carro.glb` e a casa 3D usa ele no
+  lugar do carro gerado em código (o servidor avisa em `/js/config.js`, `MODELOS.carro`). Escala, centro e altura são
+  ajustados sozinhos (comprimento de ~4,5 m); vidros (nomes com glass/window/vidro ou material transparente) viram vidro
+  preto transparente; nós com wheel/tire/rim/roda/pneu no nome giram quando o carro anda. Se a frente vier ao contrário,
+  `?carroGiro=180`. Use um modelo com licença livre (ex.: CC-BY no Sketchfab, com o crédito aqui no README) e prefira
+  arquivos de até ~10 MB (o Render serve o arquivo a cada visita).
 
 ### Luzes por cômodo
 

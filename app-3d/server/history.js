@@ -37,6 +37,9 @@ const EVENTOS = {
   V9: (v) => ["alarme", v === "1" ? "armado" : "desarmado"],
   V8: (v, antes) => (/ATIVO/.test(v) && !/ATIVO/.test(antes) ? ["alarme", "disparado"] : null),
   V11: (v) => (v === "1" ? ["presenca", "detectada"] : null),
+  // V3: carregador do carro (pinos só do histórico, gravados pelo server.js)
+  V24: (v) => ["carregador", v === "1" ? "carregando" : "parado"],
+  V26: (v) => ["carro", v === "1" ? "chegou" : "saiu"],
 };
 
 // números viram number na resposta (gráficos); textos como "ABERTA" ficam como estão
@@ -187,7 +190,10 @@ function aleatorio(semente) {
 function semearDemo(agora, dias = 7) {
   const rnd = aleatorio(20261019);
   const L = [], E = [];
-  const s = { V0: "0", V1: "0", V3: "1", V7: "FECHADA", V8: "DESARMADO", V9: "0", V11: "0", V14: "0" };
+  const s = { V0: "0", V1: "0", V3: "1", V7: "FECHADA", V8: "DESARMADO", V9: "0", V11: "0", V14: "0", V24: "0", V25: "70", V26: "1" };
+  // V3: carro elétrico — sai e volta nos dias úteis; carrega à noite (quase sempre fora de ponta)
+  const CARGA_PCT = ((2.2 * AMOSTRA_MS) / 3600000 / 40) * 100; // 2,2 kW numa bateria de 40 kWh, por amostra
+  let bat = 70, cargaAs = null;
   const muda = (ts, pino, valor) => {
     if (s[pino] === String(valor)) return false;
     s[pino] = String(valor);
@@ -215,6 +221,7 @@ function semearDemo(agora, dias = 7) {
         noiteManual: rnd() < (fds ? 0.4 : 0.6), // à noite troca para manual e deixa a luz acesa
         manualIni: 19 + rnd() * 0.5,
         manualFim: 22.3 + rnd() * 0.5,
+        cargaNaPonta: rnd() < 0.25, // às vezes liga o carregador assim que chega (horário de ponta)
       };
       muda(t, "V14", 0);
     }
@@ -273,6 +280,31 @@ function semearDemo(agora, dias = 7) {
       muda(fim, "V11", 0);
     }
 
+    // carro: sai de manhã (a carga para), volta à tarde com a bateria mais baixa e carrega
+    if (em(r.sair)) {
+      const ts = na(r.sair);
+      if (s.V24 === "1") { muda(ts, "V24", 0); ev(ts, "carregador", "automatico", "parado"); }
+      muda(ts, "V26", 0); ev(ts, "carro", "cena", "saiu"); // no app o carro só se move pelas cenas Saí e Cheguei
+      cargaAs = null;
+    }
+    if (em(r.voltar)) {
+      const ts = na(r.voltar);
+      bat = Math.max(10, bat - 3 - (r.voltar - r.sair)); // mesmo gasto do server/carregador.js
+      muda(ts, "V26", 1); ev(ts, "carro", "cena", "chegou");
+      muda(ts, "V25", Math.floor(bat));
+      if (bat < 60) cargaAs = r.cargaNaPonta ? ts + 60000 : null;
+      if (bat < 60 && !r.cargaNaPonta) { ev(ts + 60000, "carregador", "painel", "aguardando fora de ponta"); cargaAs = na(22); }
+    }
+    if (cargaAs !== null && s.V26 === "1" && s.V24 === "0" && t + AMOSTRA_MS > cargaAs && bat < 100) {
+      const ts = Math.max(t, cargaAs);
+      muda(ts, "V24", 1); ev(ts, "carregador", r.cargaNaPonta && h < 22 ? "painel" : "automatico", "carregando");
+    }
+    if (s.V24 === "1") {
+      bat = Math.min(100, bat + CARGA_PCT);
+      muda(t, "V25", Math.floor(bat));
+      if (bat >= 100) { muda(t, "V24", 0); ev(t, "carregador", "automatico", "parado"); cargaAs = null; }
+    }
+
     // janela no automático: abre ≥ 30 °C, fecha ≤ 27 °C
     if (s.V3 === "1") {
       if (temp >= 30 && s.V7 === "FECHADA") { muda(t, "V7", "ABERTA"); ev(t, "janela", "automatico", "aberta"); }
@@ -321,6 +353,7 @@ function criarHistorico({ url, demo, valores, lidoEm }) {
     if (c && agora - c.ts < JANELA_COMANDO_MS) return c.origem;
     if (SENSORES.has(pino)) return "sensor";
     if ((pino === "V0" || pino === "V7") && v.V3 === "1") return "automatico";
+    if (pino === "V24") return "automatico"; // sem comando: horário fora de ponta, bateria cheia, carro saiu
     return "dispositivo";
   }
 

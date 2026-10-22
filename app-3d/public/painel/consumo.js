@@ -5,7 +5,7 @@ const kwh = (x) => `${(x || 0).toLocaleString('pt-BR', { minimumFractionDigits: 
 const brl = (x) => (x || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const pct = (x) => `${Math.abs(x).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}%`;
 const diaCurto = (ts) => new Date(ts).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit' }).replace('.', '');
-const COMODOS = [['sala', 'Sala', '#ffc27a'], ['cozinha', 'Cozinha', '#ff9a5c'], ['quarto', 'Quarto', '#c9a7ff'], ['externa', 'Externa', '#5ee7ff'], ['base', 'Placa e sensores', '#7d8ea3']];
+const COMODOS = [['sala', 'Sala', '#ffc27a'], ['cozinha', 'Cozinha', '#ff9a5c'], ['quarto', 'Quarto', '#c9a7ff'], ['externa', 'Externa', '#5ee7ff'], ['carregador', 'Carro elétrico', '#36e39a'], ['base', 'Placa e sensores', '#7d8ea3']];
 
 export function criarConsumo() {
   let aberto = false;
