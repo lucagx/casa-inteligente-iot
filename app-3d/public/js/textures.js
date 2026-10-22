@@ -98,21 +98,65 @@ export function concrete() {
   return toTexture(c, { repeat: [3, 3] });
 }
 
+// V1: gramado mais realista — três tons de verde em manchas grandes, áreas mais secas (amareladas) e um pouco de
+// terra aparecendo, coberto de lâminas curtas em vários tons (as mesmas cores dos tufos 3D) e trevos.
+// O mesmo desenho, em cinza, vira o relevo (bumpMap) do gramado.
+let gramaCanvas = null;
 export function grass() {
   const size = 1024;
-  const f = fbm(size, 6, 6, 31, 0.55);
-  const c = paintField(size, f, '#3a5f25', '#6d9a3c', 18, 7);
-  const g = c.getContext('2d'), r = rng(77);
-  // menos traços e mais largos: traço de 1 px vira chuvisco quando a textura é vista de longe
-  for (let i = 0; i < 7000; i++) {
-    const x = r() * size, y = r() * size, l = 5 + r() * 9;
-    const light = r() > 0.5;
-    g.strokeStyle = light ? `rgba(150,190,85,${0.08 + r() * 0.12})` : `rgba(25,50,18,${0.08 + r() * 0.14})`;
-    g.lineWidth = 1.6 + r() * 1.4;
-    g.lineCap = 'round';
-    g.beginPath(); g.moveTo(x, y); g.lineTo(x + (r() - 0.5) * 3, y - l); g.stroke();
+  const f1 = fbm(size, 5, 5, 31, 0.55), f2 = fbm(size, 9, 4, 32, 0.5), f3 = fbm(size, 14, 3, 33, 0.5);
+  const c = canvas(size), g = c.getContext('2d'), img = g.createImageData(size, size), r = rng(76);
+  const escuro = new THREE.Color('#335222'), medio = new THREE.Color('#4c7430'), claro = new THREE.Color('#6a9140');
+  const seco = new THREE.Color('#8a8c45'), terra = new THREE.Color('#5c4a30'), k = new THREE.Color();
+  for (let i = 0; i < f1.length; i++) {
+    const t = f1[i];
+    k.copy(escuro).lerp(medio, Math.min(1, t * 1.6)).lerp(claro, Math.max(0, t - 0.55) * 1.8);
+    const sec = Math.max(0, f2[i] - 0.6) * 2.2; // manchas mais secas
+    if (sec > 0) k.lerp(seco, Math.min(0.55, sec));
+    const ter = Math.max(0, f3[i] - 0.74) * 3; // falhas com terra
+    if (ter > 0) k.lerp(terra, Math.min(0.45, ter));
+    const j = (r() - 0.5) * 0.035;
+    img.data[i * 4] = Math.min(255, Math.max(0, (k.r + j) * 255));
+    img.data[i * 4 + 1] = Math.min(255, Math.max(0, (k.g + j) * 255));
+    img.data[i * 4 + 2] = Math.min(255, Math.max(0, (k.b + j) * 255));
+    img.data[i * 4 + 3] = 255;
   }
-  return toTexture(soften(c, 1.1), { repeat: [7, 5] });
+  g.putImageData(img, 0, 0);
+  // lâminas curtas: tons das lâminas 3D (base escura → ponta clara) e algumas secas
+  g.lineCap = 'round';
+  const tons = ['#2c4a1d', '#3b5e26', '#4f7a31', '#64903d', '#7aa448', '#8f9a4a'];
+  for (let i = 0; i < 42000; i++) {
+    const x = r() * size, y = r() * size, l = 3 + r() * 7, a = -Math.PI / 2 + (r() - 0.5) * 1.4;
+    g.strokeStyle = tons[Math.floor(Math.pow(r(), 1.3) * tons.length)];
+    g.globalAlpha = 0.18 + r() * 0.3;
+    g.lineWidth = 0.9 + r() * 1.1;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); g.stroke();
+  }
+  // trevos (três bolinhas) espalhados em grupos
+  for (let i = 0; i < 160; i++) {
+    const cx = r() * size, cy = r() * size;
+    for (let n = 0; n < 6 + r() * 10; n++) {
+      const x = cx + (r() - 0.5) * 40, y = cy + (r() - 0.5) * 40;
+      g.fillStyle = r() > 0.5 ? '#5d8a36' : '#4a7a2e'; g.globalAlpha = 0.55;
+      for (let p = 0; p < 3; p++) { const a = p * 2.1 + r(); g.beginPath(); g.arc(x + Math.cos(a) * 2.2, y + Math.sin(a) * 2.2, 2, 0, Math.PI * 2); g.fill(); }
+    }
+  }
+  g.globalAlpha = 1;
+  gramaCanvas = soften(c, 0.6);
+  return toTexture(gramaCanvas, { repeat: [7, 5] });
+}
+// relevo do gramado: luminância do próprio desenho (lâminas claras sobressaem)
+export function grassBump() {
+  if (!gramaCanvas) grass();
+  const size = gramaCanvas.width, c = canvas(size), g = c.getContext('2d');
+  g.drawImage(gramaCanvas, 0, 0);
+  const img = g.getImageData(0, 0, size, size);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const l = img.data[i] * 0.3 + img.data[i + 1] * 0.6 + img.data[i + 2] * 0.1;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = l;
+  }
+  g.putImageData(img, 0, 0);
+  return toTexture(c, { repeat: [7, 5], color: false });
 }
 
 export function soil() {
@@ -275,27 +319,39 @@ export function stone() {
   return toTexture(paintField(256, f, '#bdb6aa', '#d9d3c8', 12, 17));
 }
 
-// cacho de folhas com transparência (para cartões de folhagem)
-export function leafCluster(seed = 201, hues = [[0.28, 0.42, 0.2], [0.3, 0.38, 0.16], [0.26, 0.45, 0.24], [0.32, 0.35, 0.13]]) {
+// V1: raminho de folhas com transparência — galho curvo com 9 folhas alternadas, cada uma com nervura,
+// lado claro/escuro e ponta fina. Cartões pequenos com este desenho formam a copa (folhas, não manchas).
+export function leafSprig(seed = 201, hue = 0.27) {
   const size = 256, c = canvas(size), g = c.getContext('2d'), r = rng(seed);
-  for (let i = 0; i < 22; i++) {
-    const ang = r() * Math.PI * 2, rad = Math.sqrt(r()) * 82;
-    const x = 128 + Math.cos(ang) * rad, y = 128 + Math.sin(ang) * rad;
-    const len = 44 + r() * 30, w = len * (0.36 + r() * 0.1), a = r() * Math.PI * 2;
-    const [h, s, l] = hues[i % hues.length];
-    const col = new THREE.Color().setHSL(h + (r() - 0.5) * 0.03, s, l + (r() - 0.5) * 0.08);
-    const dark = col.clone().multiplyScalar(0.65);
-    g.save(); g.translate(x, y); g.rotate(a);
-    const grd = g.createLinearGradient(0, -w, 0, w);
-    grd.addColorStop(0, `#${dark.getHexString()}`); grd.addColorStop(0.5, `#${col.getHexString()}`); grd.addColorStop(1, `#${dark.getHexString()}`);
-    g.fillStyle = grd;
-    g.beginPath();
-    g.moveTo(-len / 2, 0);
-    g.quadraticCurveTo(0, -w, len / 2, 0);
-    g.quadraticCurveTo(0, w, -len / 2, 0);
-    g.fill();
-    g.strokeStyle = 'rgba(20,40,10,0.45)'; g.lineWidth = 1.2;
-    g.beginPath(); g.moveTo(-len / 2, 0); g.lineTo(len / 2, 0); g.stroke();
+  const caule = (t) => [128 + Math.sin(t * 2.4 + 0.4) * 14, 246 - t * 222];
+  g.strokeStyle = '#4b3a22'; g.lineWidth = 3.2; g.lineCap = 'round';
+  g.beginPath();
+  for (let t = 0; t <= 1.001; t += 0.05) { const [x, y] = caule(t); t === 0 ? g.moveTo(x, y) : g.lineTo(x, y); }
+  g.stroke();
+  const n = 9;
+  for (let i = 0; i < n; i++) {
+    const t = 0.12 + (i / (n - 1)) * 0.86;
+    const [x, y] = caule(t);
+    const lado = i === n - 1 ? 0 : i % 2 ? 1 : -1;
+    const ang = -Math.PI / 2 + lado * (0.75 + r() * 0.35) + (r() - 0.5) * 0.2;
+    const len = (i === n - 1 ? 62 : 70 - t * 18) * (0.85 + r() * 0.3), w = len * (0.34 + r() * 0.06);
+    const col = new THREE.Color().setHSL(hue + (r() - 0.5) * 0.04, 0.45 + r() * 0.12, 0.26 + r() * 0.1);
+    const claro = col.clone().offsetHSL(0.01, 0.02, 0.1), escuro = col.clone().multiplyScalar(0.62);
+    g.save(); g.translate(x, y); g.rotate(ang + Math.PI / 2);
+    // folha apontando para cima (eixo -y), metade de cada cor
+    for (const [m, cor] of [[-1, claro], [1, escuro]]) {
+      const grd = g.createLinearGradient(0, 0, 0, -len);
+      grd.addColorStop(0, `#${cor.clone().multiplyScalar(0.8).getHexString()}`); grd.addColorStop(0.6, `#${cor.getHexString()}`);
+      grd.addColorStop(1, `#${cor.clone().offsetHSL(0, 0, 0.05).getHexString()}`);
+      g.fillStyle = grd;
+      g.beginPath(); g.moveTo(0, 0);
+      g.bezierCurveTo(m * w * 0.75, -len * 0.25, m * w * 0.55, -len * 0.75, 0, -len);
+      g.lineTo(0, 0); g.fill();
+    }
+    g.strokeStyle = 'rgba(210,230,160,0.35)'; g.lineWidth = 1.1;
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -len * 0.92); g.stroke();
+    g.strokeStyle = 'rgba(20,40,10,0.25)'; g.lineWidth = 0.7;
+    for (let k = 1; k < 5; k++) { const yy = -len * k / 5.5; g.beginPath(); g.moveTo(0, yy); g.lineTo(w * 0.35, yy - len * 0.08); g.moveTo(0, yy); g.lineTo(-w * 0.35, yy - len * 0.08); g.stroke(); }
     g.restore();
   }
   const t = toTexture(c);
@@ -303,25 +359,36 @@ export function leafCluster(seed = 201, hues = [[0.28, 0.42, 0.2], [0.3, 0.38, 0
   return t;
 }
 
-// tufo de lâminas de grama com transparência
-export function grassBlades(seed = 301) {
-  const W = 128, H = 128, c = canvas(W), g = c.getContext('2d'), r = rng(seed);
-  for (let i = 0; i < 22; i++) {
-    const x = 10 + r() * 108, h = 55 + r() * 70, lean = (r() - 0.5) * 40, w = 3 + r() * 3;
-    const col = new THREE.Color().setHSL(0.25 + r() * 0.05, 0.42, 0.17 + r() * 0.12);
-    const tipc = col.clone().offsetHSL(0, -0.05, 0.05);
-    const grd = g.createLinearGradient(0, H, 0, H - h);
-    grd.addColorStop(0, `#${col.clone().multiplyScalar(0.55).getHexString()}`);
-    grd.addColorStop(1, `#${tipc.getHexString()}`);
-    g.fillStyle = grd;
-    g.beginPath();
-    g.moveTo(x - w, H);
-    g.quadraticCurveTo(x + lean * 0.4, H - h * 0.6, x + lean, H - h);
-    g.quadraticCurveTo(x + lean * 0.4 + w * 0.6, H - h * 0.55, x + w, H);
-    g.closePath();
-    g.fill();
+// V1: casca de árvore — fissuras verticais irregulares sobre marrom acinzentado (repete em volta do galho)
+export function bark() {
+  const W = 256, H = 512, c = document.createElement('canvas'), r = rng(611);
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const f = fbm(W, 4, 4, 612, 0.5);
+  const img = g.createImageData(W, H);
+  const A = new THREE.Color('#6b5643'), B = new THREE.Color('#a08a70');
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const t = f[(y % W) * W + x], i = (y * W + x) * 4;
+    img.data[i] = (A.r + (B.r - A.r) * t) * 255; img.data[i + 1] = (A.g + (B.g - A.g) * t) * 255;
+    img.data[i + 2] = (A.b + (B.b - A.b) * t) * 255; img.data[i + 3] = 255;
   }
-  const t = toTexture(c);
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  g.putImageData(img, 0, 0);
+  g.lineCap = 'round';
+  for (let i = 0; i < 70; i++) {
+    let x = r() * W, y = r() * H;
+    const l = 40 + r() * 160;
+    g.strokeStyle = `rgba(40,30,20,${0.3 + r() * 0.3})`; g.lineWidth = 1.5 + r() * 3;
+    g.beginPath(); g.moveTo(x, y);
+    for (let k = 0; k < l; k += 10) { x += (r() - 0.5) * 5; y += 10; g.lineTo(((x % W) + W) % W, y % H); }
+    g.stroke();
+  }
+  for (let i = 0; i < 400; i++) {
+    g.fillStyle = `rgba(150,135,110,${0.06 + r() * 0.1})`;
+    g.fillRect(r() * W, r() * H, 2 + r() * 6, 1 + r() * 2);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
   return t;
 }

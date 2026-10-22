@@ -14,7 +14,7 @@ async function api(url) {
 }
 
 // textos da linha do tempo
-const ORIGEM = { painel: 'painel', cena: 'cena', automatico: 'automático', dispositivo: 'app/botão', sensor: 'sensor', sistema: 'sistema', casa3d: 'casa 3D', blynk: 'Blynk' };
+const ORIGEM = { painel: 'painel', cena: 'cena', automatico: 'automático', dispositivo: 'app/botão', sensor: 'sensor', sistema: 'sistema', casa3d: 'casa 3D', blynk: 'Blynk', rotina: 'rotina', conforto: 'conforto' };
 const TEXTO = {
   luz: (d) => `Luz geral ${d}`,
   porta: (d) => `Porta ${d}`,
@@ -25,9 +25,14 @@ const TEXTO = {
   placa: (d) => `NodeMCU ${d}`,
   cena: (d) => `Cena ${d}`,
   carro: (d) => `Carro ${d === 'chegou' ? 'chegou à garagem' : 'saiu da garagem'}`,
+  rotina: (d) => `Rotina: ${d}`,
+  ausente: (d) => `Modo ausente ${d}`,
+  conforto: (d) => `Conforto: ${d}`,
+  alerta: (d) => `Alerta: ${d}`,
+  privacidade: (d) => `Privacidade: ${d}`,
   carregador: (d) => (d === 'carregando' ? 'Carro carregando' : d === 'parado' ? 'Carga do carro parou' : `Carregador ${d}`),
 };
-const COR = { luz: 'amber', presenca: 'cyan', alarme: 'red', cena: 'cyan', placa: 'muted', carregador: 'green', carro: 'muted' };
+const COR = { luz: 'amber', presenca: 'cyan', alarme: 'red', cena: 'cyan', placa: 'muted', carregador: 'green', carro: 'muted', rotina: 'amber', ausente: 'cyan', conforto: 'cyan', alerta: 'red', privacidade: 'muted' };
 const hora = (ts) => new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 const diaCurto = (ts) => new Date(ts).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit' }).replace('.', '');
 const inicioDoDia = (ts) => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); };

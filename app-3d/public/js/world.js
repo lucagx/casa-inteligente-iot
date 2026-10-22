@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeVertices, mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { MODELOS } from './config.js';
 import * as TX from './textures.js';
 import { fmt } from './format.js';
@@ -27,11 +28,11 @@ const VOID_X0 = -3.0 + T / 2;                // vão na laje começa na face int
 const damp = (cur, target, lambda, dt) => cur + (target - cur) * (1 - Math.exp(-lambda * dt));
 
 // quality: 'high' | 'medium' | 'low' (ver main.js → perfis de qualidade)
-export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, garagem: true } } = {}) {
+export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, garagem: true }, onCreditoCarro = null } = {}) {
   const hi = quality === 'high';
-  // perfis com MSAA usam alpha-to-coverage: borda de folha/grama suave em vez de serrilhada e "cintilante"
+  // perfis com MSAA usam alpha-to-coverage: borda de folha suave em vez de serrilhada e "cintilante"
   const a2c = quality !== 'low';
-  const cutout = (o, test) => Object.assign(o, a2c ? { alphaToCoverage: true, alphaTest: 0.12 } : { alphaTest: test });
+  const cutout = (o, test) => Object.assign(o, a2c ? { alphaToCoverage: true, alphaTest: 0.3 } : { alphaTest: test });
   const root = new THREE.Group();
   scene.add(root);
 
@@ -55,7 +56,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     frame: std({ color: 0x1f2328, metalness: 0.75, roughness: 0.35 }),
     steel: std({ color: 0xc3c7cc, metalness: 1, roughness: 0.28 }),
     black: std({ color: 0x141518, roughness: 0.4, metalness: 0.2 }),
-    grass: std({ map: TX.grass(), roughness: 0.96 }),
+    grass: std({ map: TX.grass(), bumpMap: TX.grassBump(), bumpScale: 1.2, roughness: 0.96 }),
     soil: std({ map: TX.soil(), roughness: 1 }),
     rock: std({ map: TX.rock(), roughness: 0.95 }),
     stone: std({ map: tex(TX.stone, [1, 1]), roughness: 0.82 }),
@@ -68,7 +69,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     cabinet: std({ color: 0x353b42, roughness: 0.5, metalness: 0.1 }),
     ceramic: std({ color: 0xe8e2d6, roughness: 0.6 }),
     terracotta: std({ color: 0xa65a3a, roughness: 0.85 }),
-    bark: std({ color: 0x5a4432, roughness: 0.95 }),
+    bark: std({ map: tex(TX.bark, [2, 1]), roughness: 0.95 }),
     solar: std({ map: TX.solarPanel(), metalness: 0.5, roughness: 0.22 }),
     whitePlastic: std({ color: 0xf2f2ee, roughness: 0.55 }),
     pcbBlack: std({ color: 0x15171a, roughness: 0.6 }),
@@ -727,16 +728,125 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     cyl(interior, 0.018, 0.018, 1.1, M.steel, -1.2, FL + 0.55, 2.6, 8);
   }
   // planta grande
+  // ================================================================
+  // V1: plantas com estrutura de verdade — o mesmo gerador para árvores, arbustos e vasos.
+  // Galhos: cilindros que afinam e se dividem (casca unida numa malha). Folhas: raminhos desenhados (cartões com
+  // recorte alfa) presos perto dos ramos, virados para fora da planta — a normal aponta para fora e a luz cai
+  // como num volume. Por dentro e por baixo mais escuro (sombra própria), topo e borda mais claros.
+  // ================================================================
+  const sprigMats = [TX.leafSprig(201, 0.27), TX.leafSprig(202, 0.3), TX.leafSprig(203, 0.24)]
+    .map((map) => new THREE.MeshStandardMaterial(cutout({ map, side: THREE.DoubleSide, roughness: 0.72 }, 0.45)));
+  const cardGeo = new THREE.PlaneGeometry(1, 1);
+  const zAxis = new THREE.Vector3(0, 0, 1), yAxis = new THREE.Vector3(0, 1, 0);
+  /**
+   * Galhada: a partir de hastes [{ p, dir, comp, raio }], cada nível divide em `filhos` galhos menores.
+   * o: { rnd, comp: [mult por nível], abre: [ângulo por nível], filhos: [[mín, máx] por nível], cacho: [raio por nível],
+   *      sobe (procura a luz), seg: [lados por nível] } → { casca: geometrias, cachos: [[centro, raio]] }
+   */
+  function galhada(hastes, o) {
+    const casca = [], cachos = [], { rnd } = o, ult = o.comp.length - 1;
+    const ramo = (p0, dir, len, r0, nivel) => {
+      const p1 = p0.clone().addScaledVector(dir, len);
+      const g = new THREE.CylinderGeometry(r0 * 0.66, r0, len, o.seg[nivel] || 4, 1, nivel > 0);
+      g.translate(0, len / 2, 0).applyQuaternion(new THREE.Quaternion().setFromUnitVectors(yAxis, dir)).translate(p0.x, p0.y, p0.z);
+      casca.push(g);
+      if (o.cacho[nivel]) {
+        cachos.push([p1, o.cacho[nivel]]);
+        if (nivel >= ult - 1) cachos.push([p0.clone().lerp(p1, 0.55), o.cacho[nivel] * 0.8]);
+      }
+      if (nivel === ult) return;
+      const [a, b] = o.filhos[nivel];
+      const n = a + Math.floor(rnd() * (b - a + 1));
+      const giro0 = rnd() * Math.PI * 2;
+      for (let i = 0; i < n; i++) {
+        const lider = o.lider && nivel === 0 && i === 0;
+        const abre = lider ? 0.12 + rnd() * 0.15 : o.abre[nivel] + rnd() * 0.35;
+        const az = giro0 + (i / n) * Math.PI * 2 + (rnd() - 0.5) * 0.6;
+        // eixo perpendicular ao galho pai para abrir em volta dele
+        const lado = new THREE.Vector3(Math.cos(az), 0, Math.sin(az));
+        lado.addScaledVector(dir, -lado.dot(dir)).normalize();
+        const nd = dir.clone().multiplyScalar(Math.cos(abre)).addScaledVector(lado, Math.sin(abre));
+        nd.y += o.sobe;
+        nd.normalize();
+        const comp = o.comp[nivel + 1] * (0.8 + rnd() * 0.4) * (lider ? 0.9 : 1);
+        const inicio = nivel === 0 ? p0.clone().lerp(p1, lider ? 1 : o.forquilha + rnd() * (1 - o.forquilha)) : p1;
+        ramo(inicio, nd, comp, r0 * 0.6, nivel + 1);
+      }
+    };
+    for (const h of hastes) ramo(h.p, h.dir, h.comp, h.raio, 0);
+    return { casca, cachos };
+  }
+  /** Raminhos de folha em volta dos cachos → matrizes/cores num InstancedMesh (a partir de `k0`). */
+  function folhas(inst, k0, cachos, por, tam, rnd, aperto = 0.85, tom = 1) {
+    const centro = cachos.reduce((a, [p]) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / cachos.length);
+    const yMin = Math.min(...cachos.map(([p]) => p.y)), yMax = Math.max(...cachos.map(([p]) => p.y));
+    const raioMax = Math.max(0.01, ...cachos.map(([p]) => p.distanceTo(centro)));
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), tw = new THREE.Quaternion(), c = new THREE.Color(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+    let k = k0;
+    for (const [pc, rc] of cachos) {
+      for (let i = 0; i < por; i++) {
+        v.set(rnd() * 2 - 1, rnd() * 1.6 - 0.6, rnd() * 2 - 1).normalize();
+        const pos = pc.clone().addScaledVector(v, rc * (0.15 + rnd() * aperto));
+        const fora = v.clone().multiplyScalar(0.6).add(pos.clone().sub(centro).normalize().multiplyScalar(0.8))
+          .add(new THREE.Vector3(rnd() - 0.5, rnd() - 0.3, rnd() - 0.5).multiplyScalar(0.6)).normalize();
+        q.setFromUnitVectors(zAxis, fora);
+        tw.setFromAxisAngle(fora, rnd() * Math.PI * 2);
+        q.premultiply(tw);
+        const sz = tam * (0.75 + rnd() * 0.5);
+        inst.setMatrixAt(k, m4.compose(pos, q, sc.set(sz, sz, sz)));
+        const alt = (pos.y - yMin) / Math.max(0.01, yMax - yMin), borda = Math.min(1, pos.distanceTo(centro) / raioMax);
+        const luz = (0.42 + alt * 0.26 + borda * 0.28) * tom;
+        inst.setColorAt(k, c.setRGB(luz * (0.92 + rnd() * 0.14), luz * (0.95 + rnd() * 0.1), luz * (0.85 + rnd() * 0.15)));
+        k++;
+      }
+    }
+    return k;
+  }
+  const densidade = hi ? 1 : quality === 'medium' ? 0.6 : 0.35; // raminhos por cacho caem nos perfis mais leves
+  // arbusto: 4–6 hastes saindo do chão, duas divisões; folhas bem junto dos ramos (nada solto em volta)
+  const arbusto = (x, y, z, S, rnd) => {
+    const hastes = [];
+    const n = 4 + Math.floor(rnd() * 3);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + rnd(), inc = 0.25 + rnd() * 0.45;
+      hastes.push({ p: new THREE.Vector3(x + Math.cos(a) * 0.06 * S, y, z + Math.sin(a) * 0.06 * S),
+        dir: new THREE.Vector3(Math.cos(a) * Math.sin(inc), Math.cos(inc), Math.sin(a) * Math.sin(inc)), comp: 0.42 * S, raio: 0.025 * S });
+    }
+    return galhada(hastes, { rnd, comp: [0.42 * S, 0.3 * S, 0.2 * S], abre: [0.45, 0.4], filhos: [[2, 3], [2, 3]], cacho: [0, 0.2 * S, 0.17 * S],
+      sobe: 0.25, seg: [5, 4, 3], forquilha: 0.6 });
+  };
+  // planta de vaso: hastes quase em pé e copa estreita — nada passa de `raio` em volta do vaso (paredes e vidros perto)
+  const plantaDeVaso = (x, y, z, S, raio, rnd) => {
+    const hastes = [];
+    const n = 3 + Math.floor(rnd() * 2);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + rnd(), inc = 0.06 + rnd() * 0.16;
+      hastes.push({ p: new THREE.Vector3(x + Math.cos(a) * 0.04 * S, y, z + Math.sin(a) * 0.04 * S),
+        dir: new THREE.Vector3(Math.cos(a) * Math.sin(inc), Math.cos(inc), Math.sin(a) * Math.sin(inc)), comp: 0.5 * S, raio: 0.018 * S });
+    }
+    const g = galhada(hastes, { rnd, comp: [0.5 * S, 0.22 * S, 0.14 * S], abre: [0.3, 0.3], filhos: [[2, 3], [2, 2]], cacho: [0, 0.13 * S, 0.11 * S],
+      sobe: 0.5, seg: [5, 4, 3], forquilha: 0.55 });
+    // cachos puxados para dentro do raio (as folhas saem até ~0,7 do raio do cacho + metade do raminho)
+    for (const c of g.cachos) {
+      const dx = c[0].x - x, dz = c[0].z - z, d = Math.hypot(dx, dz), lim = Math.max(0.05, raio - c[1]);
+      if (d > lim) { c[0].x = x + (dx / d) * lim; c[0].z = z + (dz / d) * lim; }
+    }
+    return g;
+  };
+
+  // vaso com terra e uma planta do mesmo gerador das árvores/arbustos (mesmas folhas do jardim)
+  let vasoSeed = 41;
   function plant(parent, x, z, s = 1, y = FL) {
     cyl(parent, 0.22 * s, 0.17 * s, 0.45 * s, M.ceramic, x, y + 0.225 * s, z);
-    const leafMats = [std({ color: 0x3f6b35, roughness: 0.7 }), std({ color: 0x2f5a2c, roughness: 0.7 }), std({ color: 0x5b8a3f, roughness: 0.7 })];
-    for (let i = 0; i < 7; i++) {
-      const b = shadowed(new THREE.Mesh(blobGeo(0.2 * s, 2, 0.25, i), leafMats[i % 3]));
-      const a = (i / 7) * Math.PI * 2;
-      b.position.set(x + Math.cos(a) * 0.18 * s, y + (0.8 + (i % 3) * 0.25) * s, z + Math.sin(a) * 0.18 * s);
-      parent.add(b);
-    }
-    cyl(parent, 0.02 * s, 0.03 * s, 0.7 * s, M.bark, x, y + 0.75 * s, z, 8);
+    cyl(parent, 0.2 * s, 0.2 * s, 0.02 * s, std({ color: 0x3b2a1c, roughness: 1 }), x, y + 0.43 * s, z, 20); // terra
+    let sd = (vasoSeed += 97);
+    const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647);
+    const { casca, cachos } = plantaDeVaso(x, y + 0.44 * s, z, 1.25 * s, 0.32 * s, rnd);
+    parent.add(shadowed(new THREE.Mesh(mergeGeometries(casca), M.bark)));
+    const por = Math.max(6, Math.round(16 * densidade));
+    const inst = shadowed(new THREE.InstancedMesh(cardGeo, sprigMats[vasoSeed % 3], cachos.length * por), true, true);
+    folhas(inst, 0, cachos, por, 0.17 * s, rnd, 0.7, 0.8);
+    parent.add(inst);
   }
   plant(interior, -5.3, 2.9, 1.2);
   plant(interior, 1.1, 2.9, 0.9);
@@ -1199,54 +1309,99 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     root.add(car);
     if (MODELOS.carro) carregarCarro();
   }
-  // V3: modelo 3D de um carro de verdade (glTF, public/modelos/carro.glb), se existir — ver README
-  // Ajusta sozinho: comprimento igual ao do carro gerado, centralizado, rodas no chão. Vidros viram vidro preto
-  // transparente; rodas (nós com wheel/roda/tire/pneu/rim no nome) giram quando o carro anda.
-  // ?carroGiro=180 vira o modelo se a frente vier ao contrário.
+  // V3: modelo 3D de um carro de verdade (glTF binário em public/modelos/*.glb), se existir — ver README.
+  // O servidor diz qual usar (MODELOS.carro, CARRO_MODELO no .env); ?carro=nome troca na hora, ?carroGiro=180 vira a frente.
+  // Ajustes automáticos: comprimento igual ao do carro gerado, centralizado, rodas no chão; vidros com "transmission"
+  // (renderiza a cena 2×, armadilha nº 5) viram vidro preto translúcido nas janelas e lente clara nos faróis/lanternas;
+  // peças de roda que vêm com as 4 rodas numa malha só são divididas por quadrante, cada roda no seu eixo.
+  const RODA = /(^|[_\s.])(rim|rims|wheel|wheels|tyre|tire|pneu|roda|disk|alloy)([_\s.]|$)/i;
   function carregarCarro() {
-    new GLTFLoader().load('/modelos/carro.glb', (gltf) => {
+    const q = new URLSearchParams(location.search);
+    const nome = MODELOS.carros?.includes(q.get('carro')) ? q.get('carro') : MODELOS.carro;
+    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    loader.load(`/modelos/${encodeURIComponent(nome)}.glb`, (gltf) => {
       const m = gltf.scene;
-      const giro = Number(new URLSearchParams(location.search).get('carroGiro')) || 0;
+      const giro = Number(q.get('carroGiro')) || 0;
       let caixa = new THREE.Box3().setFromObject(m), tam = caixa.getSize(new THREE.Vector3());
       if (tam.x > tam.z) m.rotation.y = Math.PI / 2;  // comprimento no eixo z do carro
       m.rotation.y += THREE.MathUtils.degToRad(giro);
       m.updateMatrixWorld(true);
       caixa = new THREE.Box3().setFromObject(m); tam = caixa.getSize(new THREE.Vector3());
-      const esc = 4.54 / tam.z;
-      m.scale.multiplyScalar(esc);
+      m.scale.multiplyScalar(4.54 / tam.z);
       m.updateMatrixWorld(true);
       caixa = new THREE.Box3().setFromObject(m);
       const centro = caixa.getCenter(new THREE.Vector3());
       m.position.sub(new THREE.Vector3(centro.x, caixa.min.y, centro.z));
-      const vidro = new THREE.MeshPhysicalMaterial({ color: 0x030405, roughness: 0.05, transparent: true, opacity: 0.74, specularIntensity: 0.25, ior: 1.2, envMapIntensity: 0.4, depthWrite: false });
-      const rodas = [];
-      m.traverse((o) => {
-        if (o.isMesh) {
-          o.castShadow = true; o.receiveShadow = true;
-          const nome = `${o.name} ${o.material?.name || ''}`.toLowerCase();
-          if (/glass|vidro|window|janela|windshield/.test(nome) || (o.material?.transparent && o.material.opacity < 0.9)) { o.material = vidro; o.castShadow = false; o.renderOrder = 2; }
-        }
-        if (/wheel|roda|tire|tyre|pneu|rim/i.test(o.name) && !rodas.some((r) => r.getObjectById(o.id))) rodas.push(o);
-      });
       car.add(m);
       car.updateMatrixWorld(true);
-      // cada roda num pivô no próprio centro (o nó do modelo nem sempre gira em torno do eixo)
-      const rodasPivos = [];
-      for (const r of rodas.filter((r) => !rodas.some((o) => o !== r && o.getObjectById(r.id)))) {
-        const c = new THREE.Box3().setFromObject(r).getCenter(new THREE.Vector3());
-        const pivo = new THREE.Group();
-        pivo.position.copy(car.worldToLocal(c.clone()));
-        car.add(pivo);
-        pivo.attach(r);
-        rodasPivos.push(pivo);
+
+      // materiais: vidro preto nas janelas, lente clara nas luzes, nada de transmission
+      const vidro = new THREE.MeshPhysicalMaterial({ color: 0x030405, roughness: 0.05, transparent: true, opacity: 0.74, side: THREE.DoubleSide,
+        specularIntensity: 0.25, ior: 1.2, envMapIntensity: 0.4, depthWrite: false });
+      const lente = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.04, transparent: true, opacity: 0.18, specularIntensity: 0.6,
+        envMapIntensity: 0.8, depthWrite: false });
+      const rodas = [];
+      m.traverse((o) => {
+        if (!o.isMesh) return;
+        o.castShadow = true; o.receiveShadow = true;
+        const mt = o.material, nome = `${o.name} ${mt.name || ''}`.toLowerCase();
+        const decalque = /tex|defog|defoo|sticker|badge|mirror/.test(nome);
+        const transparente = mt.transmission > 0 || (mt.transparent && mt.opacity < 0.95);
+        if (transparente && !decalque) {
+          o.material = /light|lamp|hl|ind|tail|outer|reflector|projector|lens/.test(nome) ? lente : vidro;
+          o.castShadow = false; o.renderOrder = 2;
+        } else if (mt.transmission > 0) mt.transmission = 0;
+        if (RODA.test(o.name)) rodas.push(o);
+      });
+
+      // rodas: cada malha de roda dividida em 4 (pelo centro de cada triângulo), cada parte no pivô do seu eixo
+      const inv = car.matrixWorld.clone().invert();
+      const partes = [[], [], [], []], caixas = [0, 1, 2, 3].map(() => new THREE.Box3());
+      for (const o of rodas) {
+        const g = o.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
+        const pos = g.attributes.position, ix = g.index ? g.index.array : null;
+        const nTri = (ix ? ix.length : pos.count) / 3, listas = [[], [], [], []];
+        for (let t = 0; t < nTri; t++) {
+          const a = ix ? ix[t * 3] : t * 3, b = ix ? ix[t * 3 + 1] : t * 3 + 1, c = ix ? ix[t * 3 + 2] : t * 3 + 2;
+          const cx = pos.getX(a) + pos.getX(b) + pos.getX(c), cz = pos.getZ(a) + pos.getZ(b) + pos.getZ(c);
+          listas[(cx > 0 ? 1 : 0) + (cz > 0 ? 2 : 0)].push(a, b, c);
+        }
+        listas.forEach((l, qd) => {
+          if (!l.length) return;
+          const sub = new THREE.BufferGeometry();
+          for (const [n, at] of Object.entries(g.attributes)) sub.setAttribute(n, at);
+          sub.setIndex(l);
+          sub.computeBoundingBox();
+          caixas[qd].union(sub.boundingBox);
+          const mesh = new THREE.Mesh(sub, o.material);
+          mesh.castShadow = true; mesh.receiveShadow = true;
+          partes[qd].push(mesh);
+        });
+        o.parent.remove(o);
       }
+      const pivos = [];
+      partes.forEach((ms, qd) => {
+        if (!ms.length) return;
+        const c = caixas[qd].getCenter(new THREE.Vector3());
+        const pivo = new THREE.Group();
+        pivo.position.copy(c);
+        for (const mesh of ms) { mesh.position.copy(c).negate(); pivo.add(mesh); }
+        car.add(pivo);
+        pivos.push(pivo);
+      });
+
       carGerado.visible = false;
       carWheels.length = 0;
-      carWheels.push(...rodasPivos);
+      carWheels.push(...pivos);
       S.atualizaSombra = 3; // sombra nova com o modelo (main.js atualiza enquanto S.moving)
-      console.log(`[casa3d] modelo do carro carregado (${rodasPivos.length} rodas)`);
+      // crédito do modelo (licenças CC-BY pedem atribuição): vem do próprio arquivo (asset.extras do Sketchfab)
+      const ex = gltf.asset?.extras || {};
+      S.creditoCarro = ex.title ? { titulo: ex.title, autor: String(ex.author || '').replace(/\s*\(.*\)$/, ''), licenca: String(ex.license || '').replace(/\s*\(.*\)$/, ''), fonte: ex.source || '' } : null;
+      console.log(`[casa3d] modelo do carro: ${nome} (${pivos.length} rodas)${S.creditoCarro ? ` — ${S.creditoCarro.titulo} por ${S.creditoCarro.autor}, ${S.creditoCarro.licenca}` : ''}`);
+      onCreditoCarro?.(S.creditoCarro);
     }, undefined, (e) => console.warn(`[casa3d] modelo do carro não carregou, usando o gerado: ${e.message || e}`));
   }
+
 
   // V3: carregador do carro elétrico (wallbox) na parede leste, ao lado da vaga. Virtual: vem de state.carro.
   // Tela com a % da bateria (canvas redesenhado só quando muda) e barra de LED; cabo ligado no carro
@@ -1294,119 +1449,146 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     evCableHolster = tubo([[x0 + 0.06, yc - 0.22, zc], [x0 + 0.08, 0.55, zc + 0.05], [x0 + 0.09, 0.38, zc + 0.2], [x0 + 0.06, yc - 0.33, zc + 0.24]]);
   }
 
-  // folhagem realista: miolo escuro + centenas de cartões de folhas com recorte alfa
-  const leafTex = TX.leafCluster(201);
-  const leafTex2 = TX.leafCluster(202, [[0.2, 0.5, 0.3], [0.23, 0.55, 0.24], [0.18, 0.45, 0.36], [0.26, 0.5, 0.2]]);
-  const leafCardMat = [leafTex, leafTex2].map((map) => new THREE.MeshStandardMaterial(cutout({ map, side: THREE.DoubleSide, roughness: 0.78 }, 0.45)));
-  const cardGeo = new THREE.PlaneGeometry(1, 1);
-  const innerMat = std({ color: 0x1f3a1a, roughness: 1 });
-  const zAxis = new THREE.Vector3(0, 0, 1);
-  let leafSeed = 11;
-  const lr = () => ((leafSeed = (leafSeed * 16807) % 2147483647) / 2147483647);
-  function foliage(parent, blobs, perBlob, cardSize, matIndex = 0) {
-    const n = blobs.length * perBlob;
-    const inst = shadowed(new THREE.InstancedMesh(cardGeo, leafCardMat[matIndex], n), true, true);
-    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), tw = new THREE.Quaternion(), dir = new THREE.Vector3(), p = new THREE.Vector3(), sc = new THREE.Vector3();
-    const c = new THREE.Color();
-    let k = 0;
-    for (const [bx, by, bz, r] of blobs) {
-      for (let i = 0; i < perBlob; i++) {
-        dir.set(lr() * 2 - 1, lr() * 2 - 1, lr() * 2 - 1).normalize();
-        if (dir.y < -0.6) dir.y *= 0.4;
-        dir.normalize();
-        p.set(bx, by, bz).addScaledVector(dir, r * (0.72 + lr() * 0.36));
-        q.setFromUnitVectors(zAxis, dir);
-        tw.setFromAxisAngle(dir, lr() * Math.PI * 2);
-        q.premultiply(tw);
-        const s = cardSize * (0.75 + lr() * 0.55);
-        sc.set(s, s, s);
-        m4.compose(p, q, sc);
-        inst.setMatrixAt(k, m4);
-        const sunSide = 0.62 + Math.max(0, dir.y) * 0.28;
-        inst.setColorAt(k, c.setRGB(sunSide * (0.88 + lr() * 0.18), sunSide * (0.92 + lr() * 0.14), sunSide * (0.8 + lr() * 0.18)));
-        k++;
-      }
-      const inner = shadowed(new THREE.Mesh(blobGeo(r * 0.78, 2, 0.15, bx * 3 + bz), innerMat), true, false);
-      inner.position.set(bx, by, bz);
-      parent.add(inner);
-    }
-    parent.add(inst);
-    return inst;
-  }
-
-  // árvores
+  // árvores: tronco com líder, 3–5 galhos principais, 2 divisões; a árvore inteira balança em torno do pé
   const trees = [];
   function tree(x, z, s = 1, seed = 1) {
-    const g = new THREE.Group();
-    g.position.set(x, 0, z);
-    const trunk = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.12 * s, 0.22 * s, 2.6 * s, 10), M.bark));
-    trunk.position.y = 1.3 * s;
-    g.add(trunk);
-    for (const [a, l] of [[0.6, 1.1], [-0.7, 1.0], [2.2, 0.9]]) {
-      const br = shadowed(new THREE.Mesh(new THREE.CylinderGeometry(0.04 * s, 0.08 * s, l * s, 6), M.bark));
-      br.position.set(Math.cos(a) * 0.3 * s, 2.3 * s, Math.sin(a) * 0.3 * s);
-      br.rotation.set(Math.sin(a) * 0.7, 0, -Math.cos(a) * 0.7);
-      g.add(br);
-    }
+    let sd = seed * 7919 + 13;
+    const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647);
     const crown = new THREE.Group();
     crown.userData.dynamic = true;
-    crown.position.y = 2.6 * s;
-    const blobs = [[0, 0.9, 0, 1.45], [0.9, 0.5, 0.3, 1.05], [-0.8, 0.55, -0.35, 1.1], [0.2, 0.4, -0.95, 0.95], [-0.25, 0.45, 0.95, 1.0], [0.1, 1.7, 0.1, 0.95]]
-      .map(([bx, by, bz, r]) => [bx * s, by * s, bz * s, r * s]);
-    foliage(crown, blobs, hi ? 70 : 42, 1.35 * s, seed % 2);
-    g.add(crown);
-    root.add(g);
+    crown.position.set(x, 0, z);
+    const incl = new THREE.Vector3((rnd() - 0.5) * 0.12, 1, (rnd() - 0.5) * 0.12).normalize();
+    const { casca, cachos } = galhada([{ p: new THREE.Vector3(0, -0.05, 0), dir: incl, comp: 2.1 * s, raio: 0.2 * s }], {
+      rnd, lider: true, comp: [2.1 * s, 1.35 * s, 0.85 * s, 0.55 * s], abre: [0.6, 0.45, 0.45], filhos: [[3, 5], [2, 3], [2, 3]],
+      cacho: [0, 0, 0.8 * s, 0.62 * s], sobe: 0.22, seg: [12, 8, 5, 4], forquilha: 0.82,
+    });
+    crown.add(shadowed(new THREE.Mesh(mergeGeometries(casca), M.bark)));
+    const por = Math.max(14, Math.round(46 * densidade));
+    const inst = shadowed(new THREE.InstancedMesh(cardGeo, sprigMats[seed % 2], cachos.length * por), true, true);
+    folhas(inst, 0, cachos, por, 0.58 * s, rnd);
+    crown.add(inst);
+    root.add(crown);
     trees.push({ crown, phase: seed * 1.7 });
   }
   const ARVORES = [[-12.2, -7.0, 1.15], [-13.0, 2.8, 0.95], [12.6, -8.2, 1.2], [14.0, -2.5, 1.0], [-11.6, 9.6, 0.85], [5.0, -9.9, 0.95], [-2.0, -9.6, 1.05], [14.2, 9.6, 0.7]];
   ARVORES.forEach(([x, z, s], i) => tree(x, z, s, i + 1));
-  // V2: spot de chão em cada árvore — luminária no pé, círculo de luz e a copa clareada por baixo
+  // V2: spot de chão em cada árvore — luminária no pé e círculo de luz (o halo da copa saiu: com a copa de galhos
+  // ele ficava em volta do tronco)
   {
     for (const [x, z] of ARVORES) cyl(root, 0.07, 0.08, 0.06, M.uplight, x + 0.45, 0.03, z + 0.45, 12);
     glowBatch(poolTex, 0xffc27a, ARVORES.map(([x, z, s]) => ({ w: 1.8 * s, h: 1.8 * s, x: x + 0.2, y: 0.015, z: z + 0.2, chao: true })), 0.45);
-    halos(0xffd2a0, ARVORES.map(([x, z, s]) => [x, 2.9 * s, z, 3.4 * s]), 0.16);
   }
 
-  // sebes e arbustos (instanciados)
+  // sebes e arbustos: arbustos de verdade (hastes + folhas), uma malha de casca e um InstancedMesh para todos
   {
     const spots = [];
     for (let x = -14; x <= 14; x += 0.9) spots.push([x, -10.9, 0.62 + Math.sin(x * 1.3) * 0.12]);
     for (let z = -9; z <= 7; z += 0.95) spots.push([-14.8, z, 0.6 + Math.cos(z) * 0.1]);
     for (const [x, z] of [[-7.3, 4.4], [-7.3, 6.8], [5.85, 4.3], [1.1, 7.75], [9.4, 3.6], [9.6, -1.2], [9.5, -3.4], [-7.2, -2.0], [-7.0, 0.5]]) spots.push([x, z, 0.5 + Math.abs((x * z) % 0.25)]);
-    const blobs = spots.map(([x, z, s]) => [x, s * 0.75, z, s]);
-    foliage(root, blobs, hi ? 22 : 14, 0.7, 1);
-  }
-  // flores
-  {
-    const geo = new THREE.IcosahedronGeometry(0.032, 1);
-    const cols = [0xf2c14e, 0xe86a7a, 0xffffff, 0xb07fd1, 0xf29d52];
-    const pts = [];
-    const beds = [[4.4, 6.0, 3.95, 4.7], [-7.7, -6.85, 3.8, 7.2], [0.5, 1.7, 7.3, 7.95]]; // fora do deck (x -6,6..1,8 · z 3,9..6,8)
-    let seed = 1;
-    const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    for (const [x0, x1, z0, z1] of beds) for (let i = 0; i < 160; i++) pts.push([x0 + r() * (x1 - x0), z0 + r() * (z1 - z0), r()]);
-    const inst = new THREE.InstancedMesh(geo, std({ color: 0xffffff, roughness: 0.7 }), pts.length);
-    const c = new THREE.Color();
-    pts.forEach(([x, z, k], i) => {
-      inst.setMatrixAt(i, new THREE.Matrix4().makeTranslation(x, 0.1 + k * 0.16, z));
-      inst.setColorAt(i, c.set(cols[i % cols.length]));
-    });
+    let sd = 4242;
+    const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647);
+    const todos = spots.map(([x, z, S]) => arbusto(x, 0, z, S * 1.5, rnd));
+    root.add(shadowed(new THREE.Mesh(mergeGeometries(todos.flatMap((a) => a.casca)), M.bark), false, true));
+    const por = Math.max(5, Math.round(14 * densidade));
+    const total = todos.reduce((n, a) => n + a.cachos.length * por, 0);
+    const inst = shadowed(new THREE.InstancedMesh(cardGeo, sprigMats[2], total), true, true);
+    let k = 0;
+    spots.forEach(([, , S], i) => { k = folhas(inst, k, todos[i].cachos, por, 0.3 * S * 1.5, rnd, 0.75, 0.72); });
     root.add(inst);
   }
-  // tufos de grama (profundidade no gramado)
+  // V1: canteiros com flores de verdade — touceira de folhas compridas, caules finos e flores de 5 pétalas com miolo.
+  // 4 malhas instanciadas no total (folhas, caules, pétalas, miolos), coloridas por instância.
   {
-    const a = new THREE.PlaneGeometry(0.42, 0.3); a.translate(0, 0.15, 0);
-    const b = a.clone(); b.rotateY(Math.PI / 2);
-    const geo = mergeGeometries([a, b]);
-    const nrm = geo.attributes.normal;
-    for (let i = 0; i < nrm.count; i++) nrm.setXYZ(i, 0, 1, 0); // sombreia como o gramado
-    const grassMat = new THREE.MeshStandardMaterial(cutout({ map: TX.grassBlades(), side: THREE.DoubleSide, roughness: 0.95 }, 0.5));
+    const beds = [[4.4, 6.0, 3.95, 4.7], [-7.7, -6.85, 3.8, 7.2], [0.5, 1.7, 7.3, 7.95]]; // fora do deck (x -6,6..1,8 · z 3,9..6,8)
+    const cores = [0xf2c14e, 0xe86a7a, 0xf4f1ea, 0xb07fd1, 0xf29d52, 0xd94f6b];
+    let seed = 1;
+    const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const plantas = [];
+    for (const [x0, x1, z0, z1] of beds) {
+      const n = Math.round(((x1 - x0) * (z1 - z0)) / 0.09);
+      for (let i = 0; i < n; i++) plantas.push([x0 + r() * (x1 - x0), z0 + r() * (z1 - z0), 1.4 + r() * 0.6, r()]);
+    }
+    // folha comprida (lâmina larga dobrada no meio), 6 por touceira
+    const folha = (() => {
+      const pts = [];
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + i, cs = Math.cos(a), sn = Math.sin(a), w = 0.018, h = 0.13 + (i % 3) * 0.03, l = 0.07;
+        // dois triângulos: base larga → ponta inclinada para fora
+        pts.push(-sn * w, 0, cs * w, sn * w, 0, -cs * w, cs * l, h, sn * l);
+        pts.push(-sn * w, 0, cs * w, cs * l * 0.5, h * 0.55, sn * l * 0.5 + 0.004, cs * l, h, sn * l);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+      g.computeVertexNormals();
+      return g;
+    })();
+    const caule = new THREE.CylinderGeometry(0.003, 0.004, 1, 4).translate(0, 0.5, 0);
+    const petalas = (() => {
+      const gs = [];
+      for (let i = 0; i < 5; i++) {
+        const pg = new THREE.CircleGeometry(0.022, 8).scale(0.55, 1, 1).translate(0, 0.02, 0);
+        pg.rotateX(-Math.PI / 2 + 0.45);       // abre para cima, levemente em taça
+        pg.rotateY((i / 5) * Math.PI * 2);
+        gs.push(pg);
+      }
+      return mergeGeometries(gs);
+    })();
+    const verde = std({ color: 0x3d6a2c, roughness: 0.8, side: THREE.DoubleSide });
+    const iFolha = new THREE.InstancedMesh(folha, verde, plantas.length);
+    const iCaule = new THREE.InstancedMesh(caule, std({ color: 0x4c7a33, roughness: 0.8 }), plantas.length * 3);
+    const iPet = new THREE.InstancedMesh(petalas, std({ color: 0xffffff, roughness: 0.55, side: THREE.DoubleSide }), plantas.length * 3);
+    const iMiolo = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.008, 0), std({ color: 0xe0a92a, roughness: 0.7 }), plantas.length * 3);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), c = new THREE.Color(), v = new THREE.Vector3(), um = new THREE.Vector3(1, 1, 1);
+    plantas.forEach(([x, z, s, k], i) => {
+      iFolha.setMatrixAt(i, m.compose(v.set(x, 0, z), q.setFromEuler(e.set(0, k * 6, 0)), new THREE.Vector3(s, s, s)));
+      iFolha.setColorAt(i, c.setRGB(0.85 + k * 0.25, 0.9 + k * 0.2, 0.85));
+      const cor = cores[Math.floor(k * 997) % cores.length];
+      for (let j = 0; j < 3; j++) {
+        const a = k * 6 + (j / 3) * Math.PI * 2, d = 0.03 * s, h = (0.17 + ((j * 7 + i) % 5) * 0.025) * s;
+        const fx = x + Math.cos(a) * d, fz = z + Math.sin(a) * d;
+        q.setFromEuler(e.set(Math.sin(a) * 0.12, 0, -Math.cos(a) * 0.12));
+        iCaule.setMatrixAt(i * 3 + j, m.compose(v.set(fx, 0, fz), q, new THREE.Vector3(1, h, 1)));
+        const topo = new THREE.Vector3(0, h, 0).applyQuaternion(q).add(new THREE.Vector3(fx, 0, fz));
+        q.setFromEuler(e.set(Math.sin(a) * 0.25, a, -Math.cos(a) * 0.25));
+        iPet.setMatrixAt(i * 3 + j, m.compose(topo, q, um.clone().multiplyScalar(s)));
+        iPet.setColorAt(i * 3 + j, c.set(cor).multiplyScalar(0.9 + j * 0.06));
+        iMiolo.setMatrixAt(i * 3 + j, m.compose(topo.clone().add(new THREE.Vector3(0, 0.006, 0)), q.identity(), um.clone().multiplyScalar(s)));
+      }
+    });
+    shadowed(iFolha, true, true);
+    root.add(iFolha, iCaule, iPet, iMiolo);
+  }
+  // V1: tufos de grama — 5 lâminas 3D finas e baixas (até ~16 cm), da cor do gramado: base escura, ponta clara.
+  // Sem textura com recorte alfa (antes eram cartões PNG altos e espalhados que destoavam da casa).
+  {
+    const laminas = [];
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2 + i * 0.7, d = 0.02 + (i % 2) * 0.025;
+      const x = Math.cos(a) * d, z = Math.sin(a) * d, h = 0.1 + ((i * 37) % 7) / 100;
+      const lx = Math.cos(a) * 0.035, lz = Math.sin(a) * 0.035, w = 0.014;
+      const px = -Math.sin(a) * w, pz = Math.cos(a) * w;
+      laminas.push(x - px, 0, z - pz, x + px, 0, z + pz, x + lx, h, z + lz);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(laminas, 3));
+    const nrm = [], cor = [];
+    const baixo = new THREE.Color(0x2f4f1f), ponta = new THREE.Color(0x7aa448);
+    for (let i = 0; i < laminas.length / 9; i++) {
+      for (let k = 0; k < 3; k++) {
+        nrm.push(0, 1, 0); // sombreia como o gramado
+        const c = k === 2 ? ponta : baixo;
+        cor.push(c.r, c.g, c.b);
+      }
+    }
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(cor, 3));
+    const grassMat = std({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.95 });
     const blocked = [[-9.4, -7.1, 7.7, 10.1], [-6.8, 8.9, -4.2, 4.2], [-7.1, 2.0, 3.8, 6.9], [-7.0, -0.1, 7.1, 12], [2.1, 3.9, 3.8, 12], [6.1, 8.8, -4, 12]];
     const ok = (x, z) => !blocked.some(([a, b, c, d]) => x > a && x < b && z > c && z < d);
     const pts = [];
     let seed = 7;
     const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    while (pts.length < (hi ? 4500 : 2000)) {
+    while (pts.length < (hi ? 9000 : quality === 'medium' ? 5000 : 2500)) {
       const x = (r() - 0.5) * (LW - 1.2), z = (r() - 0.5) * (LD - 1.2);
       if (ok(x, z)) pts.push([x, z]);
     }
@@ -1414,11 +1596,11 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     inst.receiveShadow = true;
     const c = new THREE.Color(), q = new THREE.Quaternion(), e = new THREE.Euler();
     pts.forEach(([x, z], i) => {
-      const s = 0.55 + r() * 0.8;
-      q.setFromEuler(e.set((r() - 0.5) * 0.25, r() * 6, (r() - 0.5) * 0.25));
+      const s = 0.7 + r() * 0.6;
+      q.setFromEuler(e.set((r() - 0.5) * 0.2, r() * 6, (r() - 0.5) * 0.2));
       inst.setMatrixAt(i, new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), q, new THREE.Vector3(s, s * (0.8 + r() * 0.5), s)));
-      const k = 0.62 + r() * 0.3;
-      inst.setColorAt(i, c.setRGB(k, k, k * 0.9));
+      const k = 0.8 + r() * 0.3, seca = r() < 0.12 ? 0.12 : 0; // algumas touceiras mais secas, como as manchas do chão
+      inst.setColorAt(i, c.setRGB(k + seca, k + seca * 0.4, k * 0.9));
     });
     root.add(inst);
   }
@@ -1878,8 +2060,8 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     waterNormal.offset.x = t * 0.012;
     waterNormal.offset.y = t * 0.008;
     for (const tr of trees) {
-      tr.crown.rotation.z = Math.sin(t * 0.9 + tr.phase) * 0.018;
-      tr.crown.rotation.x = Math.cos(t * 0.7 + tr.phase) * 0.014;
+      tr.crown.rotation.z = Math.sin(t * 0.9 + tr.phase) * 0.007; // a árvore gira em torno do pé: ângulo pequeno
+      tr.crown.rotation.x = Math.cos(t * 0.7 + tr.phase) * 0.005;
     }
     void tmpV;
   }

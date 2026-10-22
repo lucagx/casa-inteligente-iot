@@ -367,7 +367,7 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
   }
 
   function applyState(s) {
-    const prev = values, prevScene = meta.scene, prevRooms = meta.rooms, prevCarro = meta.carro;
+    const prev = values, prevScene = meta.scene, prevRooms = meta.rooms, prevCarro = meta.carro, prevAlertas = meta.alertas;
     const changed = JSON.stringify(prev) !== JSON.stringify(s.values);
     values = s.values || {};
     meta = s;
@@ -394,6 +394,15 @@ export function createUI({ quality, qualityAuto, views, onView, addHotspot, onSt
       if (ca.naGaragem !== cb.naGaragem) event(cb.naGaragem ? 'Carro elétrico chegou à garagem' : 'Carro elétrico saiu da garagem', 'cyan');
       if (ca.carregando !== cb.carregando) event(cb.carregando ? `Carregador ligado no carro — ${String(cb.kW).replace('.', ',')} kW` : `Carga parou — bateria em ${Math.floor(cb.bateria)}%`, cb.carregando ? 'green' : '');
       else if (!ca.aguardando && cb.aguardando) event('Carregador aguardando o horário fora de ponta (22h)', 'amber');
+    }
+    // I7: alerta novo (porta aberta, invasão, calor, placa offline, bateria) aparece no feed e como aviso
+    if (!first) {
+      const antes = new Set((prevAlertas || []).map((a) => a.id));
+      for (const a of s.alertas || []) {
+        if (antes.has(a.id)) continue;
+        event(`Alerta: ${a.titulo} — ${a.texto}`, a.nivel === 'critico' ? 'red' : 'amber');
+        toast(a.titulo, a.nivel === 'critico' ? 'err' : '');
+      }
     }
     if (!first && prevScene && !s.scene) event(`Cena ${prevScene.nome} concluída`, 'cyan');
     renderScenes();
