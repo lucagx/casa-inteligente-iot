@@ -4,6 +4,9 @@ import { fmt } from '/js/format.js';
 import { SENSORES } from '/js/config.js';
 import { criarHistorico } from '/painel/historico.js';
 import { criarConsumo } from '/painel/consumo.js';
+import { criarRotina } from '/painel/rotina.js';
+import { criarInsights } from '/painel/insights.js';
+import { criarPrivacidade } from '/painel/privacidade.js';
 
 const $ = (s) => document.querySelector(s);
 
@@ -285,7 +288,8 @@ function render() {
   modeManual.classList.toggle('on', modeKnown && !auto);
   $('#modeHint').textContent = !modeKnown ? 'Aguardando a primeira leitura da placa…' : auto
     ? `As regras do firmware decidem: janela abre ≥ 30 °C e fecha ≤ 27 °C; luz acende com movimento no PIR${SENSORES.ldr ? ' quando o LDR indica escuro' : ''}. Tocar num controle passa para o manual.`
-    : 'Você comanda cada atuador por aqui, pela casa 3D ou pelo app Blynk.';
+    : 'Você comanda cada atuador por aqui, pela casa 3D ou pelo app Blynk.'
+      + (meta.conforto?.aplicar ? ` Conforto adaptativo: a janela abre com ${fmt.temp(meta.conforto.abrir)} °C e fecha com ${fmt.temp(meta.conforto.fechar)} °C (limite aprendido).` : '');
 
   const now = Date.now();
   for (const d of DEVICES) {
@@ -332,6 +336,9 @@ function render() {
   if (online && !scenes.length) loadScenes();
   renderScenes();
   renderCarro();
+  rotina.estado(meta.iob, v, meta.conforto);
+  insights.alertas(meta.alertas);
+  privacidade.estado(meta.privacidade);
   tick();
 }
 
@@ -392,6 +399,9 @@ document.addEventListener('visibilitychange', () => {
 // ---------- abas (Casa · Histórico · Consumo), pelo endereço: /painel/#historico ----------
 const historico = criarHistorico({ toast });
 const consumo = criarConsumo();
+const rotina = criarRotina({ toast });
+const insights = criarInsights({ toast });
+const privacidade = criarPrivacidade({ toast });
 function abrirAba() {
   const aba = (location.hash.slice(1) || 'casa');
   const existe = document.getElementById(`tab-${aba}`) ? aba : 'casa';
@@ -399,6 +409,8 @@ function abrirAba() {
   document.querySelectorAll('.tabbar a').forEach((a) => a.classList.toggle('on', a.dataset.tab === existe));
   if (existe === 'historico') historico.abrir(); else historico.fechar();
   if (existe === 'consumo') consumo.abrir(); else consumo.fechar();
+  if (existe === 'rotina') { rotina.abrir(); insights.abrir(); } else { rotina.fechar(); insights.fechar(); }
+  if (existe === 'privacidade') privacidade.abrir(); else privacidade.fechar();
   scrollTo(0, 0);
 }
 addEventListener('hashchange', abrirAba);

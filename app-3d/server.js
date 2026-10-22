@@ -23,6 +23,10 @@
  * CONSUMO_W, TARIFA_KWH, TARIFA_BRANCA, META_MENSAL_KWH : consumo e economia (I3, server/consumo.js).
  * CONSUMO_V15=1    : publica o consumo do dia (kWh) no V15 do Blynk a cada 5 min (depois de criar o datastream, K1).
  * CARREGADOR_KW, BATERIA_KWH : carregador do carro elétrico (V3, server/carregador.js) — virtual, fora do protoboard.
+ * Rotina aprendida, sugestões, automações e modo ausente (I5): server/rotina.js, rotas /api/rotina e /api/ausente.
+ * Conforto adaptativo da janela (I6): server/conforto.js, rotas /api/conforto. CONFORTO_V17=1 publica o limite no V17.
+ * Insights diários e alertas (I7): server/insights.js, rotas /api/insights e /api/alertas/:id; state.alertas no stream.
+ * Privacidade (I8): rotas /api/privacidade (consentimento, pausar coleta, retenção), /apagar e /exportar.
  *
  * MODO AO VIVO     : BLYNK_TOKEN configurado no .env. O servidor lê os pinos
  *                    virtuais do seu dispositivo e envia cada mudança para a
@@ -518,6 +522,7 @@ const cenas = criarCenas({
     if (MODE === "live") setTimeout(pollBlynk, 400); // confirma o estado real da placa
     // a cena em si vai para o histórico na hora em que começou; origem = onde foi tocada (painel/casa3d/blynk)
     historico.evento("cena", cena.origem, erro ? `${cena.nome} (falhou)` : cena.nome, cena.inicio);
+    if (cena.id === "cheguei" && !erro) rotina.setAusente(false, "cena").catch(() => {}); // I5: chegou ⇒ sai do modo ausente
     console.log(`[cena] ${cena.nome} (${cena.origem}) ${erro ? `falhou no passo ${cena.passo + 1}: ${erro.message}` : "concluída"}`);
   },
 });
@@ -531,6 +536,166 @@ app.post("/api/scene", (req, res) => {
     res.status(202).json({ ok: true, ...c });
   } catch (err) {
     res.status(err.status || 500).json({ ok: false, error: err.message });
+  }
+});
+
+// ------------------------------------------------------------------
+// Rotina aprendida e modo ausente (I5) — aprendizado e sugestões em server/rotina.js
+// ------------------------------------------------------------------
+const { criarRotina } = require("./server/rotina");
+const rotina = criarRotina({
+  historico, setRoom,
+  estado: () => state,
+  comandar: async (pin, value, origem) => {
+    await comandar(pin, value, origem);
+    if (MODE === "live") setTimeout(pollBlynk, 400);
+  },
+  aoMudar() { state.iob = rotina.estadoResumido(); broadcast(); },
+});
+state.iob = rotina.estadoResumido();
+const responder = (res, fn) => fn().then(() => res.json({ ok: true, ...rotina.resumo() }))
+  .catch((err) => res.status(err.status || 500).json({ ok: false, error: err.message }));
+app.get("/api/rotina", (_req, res) => res.json(rotina.resumo()));
+// { id, aceitar: true|false } — aceitar cria a automação / executa a ação; false dispensa
+app.post("/api/rotina/sugestao", (req, res) => {
+  const { id, aceitar } = req.body || {};
+  responder(res, () => (aceitar === false ? rotina.dispensar(String(id)) : rotina.aceitar(String(id))));
+});
+app.delete("/api/rotina/automacao/:id", (req, res) => responder(res, () => rotina.removerAutomacao(req.params.id)));
+app.post("/api/ausente", (req, res) => responder(res, () => rotina.setAusente(!!(req.body || {}).ligado)));
+
+// ------------------------------------------------------------------
+// Conforto adaptativo da janela (I6) — limites aprendidos dos ajustes manuais (server/conforto.js)
+// ------------------------------------------------------------------
+const { criarConforto } = require("./server/conforto");
+const conforto = criarConforto({
+  historico,
+  estado: () => state,
+  comandar: async (pin, value, origem) => {
+    await comandar(pin, value, origem);
+    if (MODE === "live") setTimeout(pollBlynk, 400);
+  },
+  aoMudar() { state.conforto = conforto.estadoResumido(); broadcast(); },
+  // V17 só existe depois de criar o datastream e atualizar o firmware para ler o limite
+  publicarV17: MODE === "live" && process.env.CONFORTO_V17 === "1" ? (v) => blynkUpdate("V17", v) : null,
+});
+state.conforto = conforto.estadoResumido();
+app.get("/api/conforto", (_req, res) => res.json(conforto.resumo()));
+app.post("/api/conforto", (req, res) => {
+  conforto.setAplicar(!!(req.body || {}).aplicar)
+    .then(() => res.json({ ok: true, ...conforto.resumo() }))
+    .catch((err) => res.status(500).json({ ok: false, error: err.message }));
+});
+
+// ------------------------------------------------------------------
+// Insights diários e alertas (I7) — server/insights.js
+// ------------------------------------------------------------------
+const { insights, criarAlertas, inicioDoDia } = require("./server/insights");
+const alertas = criarAlertas({
+  historico,
+  estado: () => state,
+  async executar(acao) {
+    if (acao.carregador) return atualizarCarro(carregador.comando({ ligado: true }), "painel");
+    // o firmware só aceita porta/janela no manual (o alarme vale em qualquer modo)
+    if (acao.pino !== "V9" && state.values.V3 === "1") await comandar("V3", 0);
+    await comandar(acao.pino, acao.valor);
+    if (MODE === "live") setTimeout(pollBlynk, 400);
+  },
+  aoMudar() { state.alertas = alertas.lista(); broadcast(); },
+});
+state.alertas = [];
+alertas.iniciar();
+app.post("/api/alertas/:id", (req, res) => {
+  const resposta = (req.body || {}).resposta === "executar" ? "executar" : "ok";
+  alertas.responder(req.params.id, resposta)
+    .then(() => res.json({ ok: true, alertas: alertas.lista() }))
+    .catch((err) => res.status(err.status || 502).json({ ok: false, error: err.message }));
+});
+// ?dia=hoje (padrão) | ontem | data ISO
+app.get("/api/insights", async (req, res) => {
+  const agora = Date.now();
+  const q = String(req.query.dia || "hoje");
+  const dia = q === "hoje" ? agora : q === "ontem" ? inicioDoDia(agora) - 1 : Date.parse(q);
+  if (!Number.isFinite(dia) || dia > agora) return res.status(400).json({ ok: false, error: "Dia inválido: use hoje, ontem ou uma data." });
+  const ini = inicioDoDia(dia), desde = Math.max(ini - 7 * DIA_MS, agora - RETENCAO_DIAS * DIA_MS), ate = Math.min(ini + DIA_MS, agora);
+  try {
+    const [evs, lt, cons] = await Promise.all([
+      historico.eventos({ desde, ate, limite: 50000 }),
+      historico.leituras({ desde, ate, pinos: ["V0"] }),
+      calcularConsumo().catch(() => null),
+    ]);
+    const d = cons?.dias.find((x) => x.ts === ini);
+    res.json(insights({ eventos: evs.eventos, v0: { pts: lt.pinos.V0, antes: lt.antes.V0 }, dia: ini, agora, consumoDia: d ? { kWh: d.kWh, reais: d.kWh * cons.tarifa, porComodo: d.porComodo } : null }));
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
+  }
+});
+
+// ------------------------------------------------------------------
+// Privacidade e consentimento (I8) — a ética do IoB: o morador decide o que fica guardado
+// ------------------------------------------------------------------
+let privacidade = { consentimento: null, pausado: false, retencaoDias: RETENCAO_DIAS };
+const resumoPrivacidade = () => ({ consentimento: privacidade.consentimento, pausado: historico.pausado, retencaoDias: historico.retencao });
+async function carregarPrivacidade() {
+  const salvo = await historico.lerConfig("privacidade");
+  if (salvo) privacidade = { ...privacidade, ...salvo };
+  historico.pausar(privacidade.pausado, "sistema", false); // ao reiniciar, sem evento repetido
+  await historico.setRetencao(privacidade.retencaoDias).catch(() => {});
+  state.privacidade = resumoPrivacidade();
+}
+state.privacidade = resumoPrivacidade();
+app.get("/api/privacidade", async (_req, res) => {
+  let contagem = null;
+  try { contagem = await historico.contar(); } catch { /* banco fora: mostra o resto */ }
+  res.json({ ...resumoPrivacidade(), motor: historico.motor, descricao: historico.descricao, contagem, maxDias: RETENCAO_DIAS });
+});
+// { consentir: true } · { pausado: bool } · { retencaoDias: 7|30|90 }
+app.post("/api/privacidade", async (req, res) => {
+  const { consentir, pausado, retencaoDias } = req.body || {};
+  try {
+    if (consentir === true && !privacidade.consentimento) {
+      privacidade.consentimento = { ts: Date.now() };
+      historico.evento("privacidade", "painel", "consentimento registrado");
+    }
+    if (pausado !== undefined) { privacidade.pausado = !!pausado; historico.pausar(!!pausado, "painel"); }
+    if (retencaoDias !== undefined) {
+      const d = Number(retencaoDias);
+      if (!Number.isFinite(d) || d < 1 || d > RETENCAO_DIAS) return res.status(400).json({ ok: false, error: `Retenção entre 1 e ${RETENCAO_DIAS} dias.` });
+      await historico.setRetencao(d);
+      privacidade.retencaoDias = historico.retencao;
+      historico.evento("privacidade", "painel", `retenção de ${historico.retencao} dias`);
+    }
+    await historico.salvarConfig("privacidade", privacidade);
+    state.privacidade = resumoPrivacidade();
+    broadcast();
+    res.json({ ok: true, ...resumoPrivacidade() });
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
+  }
+});
+app.post("/api/privacidade/apagar", async (req, res) => {
+  if ((req.body || {}).confirmar !== "APAGAR") return res.status(400).json({ ok: false, error: 'Confirme com {"confirmar":"APAGAR"}.' });
+  try {
+    await historico.apagar("painel");
+    console.log("[privacidade] histórico apagado pelo painel");
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
+  }
+});
+// direito de acesso: tudo o que está guardado, em JSON
+app.get("/api/privacidade/exportar", async (_req, res) => {
+  const ate = Date.now(), desde = ate - historico.retencao * DIA_MS;
+  try {
+    const [l, e] = await Promise.all([
+      historico.leituras({ desde, ate, pinos: [...new Set([...PINS, "V0", "V20", "V21", "V22", "V23", "V24", "V25", "V26"])] }),
+      historico.eventos({ desde, ate, limite: 100000 }),
+    ]);
+    const nome = `casa-inteligente-dados-${new Date(ate).toISOString().slice(0, 10)}.json`;
+    res.set("Content-Disposition", `attachment; filename="${nome}"`);
+    res.json({ exportadoEm: new Date(ate).toISOString(), retencaoDias: historico.retencao, leituras: l.pinos, eventos: e.eventos.reverse() });
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
   }
 });
 
@@ -658,6 +823,7 @@ if (MODE === "live") {
 setInterval(() => clients.size && broadcast(), 3000);
 
 historico.iniciar()
+  .then(() => carregarPrivacidade())
   // B5: ao reiniciar, a "última detecção" vem do histórico (senão a tela ficaria sem ela até o próximo movimento)
   .then(() => historico.eventos({ desde: Date.now() - 7 * DIA_MS, ate: Date.now(), tipos: ["presenca"], limite: 1 }))
   .then((r) => { const ts = r?.eventos?.[0]?.ts; if (ts && !state.presenceAt) state.presenceAt = ts; })
@@ -669,7 +835,10 @@ historico.iniciar()
     state.carro = carregador.restaurar(v);
   })
   .catch((err) => console.warn(`[historico] ao iniciar: ${err.message}`))
-  .finally(() => { carroPronto = true; broadcast(); });
+  .finally(() => { carroPronto = true; broadcast(); })
+  .then(() => rotina.iniciar())
+  .then(() => conforto.iniciar())
+  .catch((err) => console.warn(`[rotina] ao iniciar: ${err.message}`));
 // o Render manda SIGTERM a cada deploy: grava o que estiver na fila antes de sair
 for (const sinal of ["SIGTERM", "SIGINT"]) {
   process.once(sinal, () => historico.fechar().catch(() => {}).finally(() => process.exit(0)));
