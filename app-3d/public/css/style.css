@@ -413,3 +413,7 @@ body.alarm .vignette { opacity: 1; animation: alarm .6s ease-in-out infinite; }
   .sheet-toggle span { display: block; width: 44px; height: 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.3); margin: 10px auto 0; }
   .panel.open ~ .dock-bar { opacity: 0; pointer-events: none; }
 }
+
+/* V3: crédito do modelo 3D do carro */
+.credito { position: fixed; right: 12px; bottom: 6px; z-index: 5; font: 10px var(--mono, monospace); color: rgba(234, 241, 248, 0.55); text-decoration: none; }
+.credito:hover { color: var(--ink, #eaf1f8); text-decoration: underline; }

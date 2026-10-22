@@ -429,11 +429,12 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   box(root, LW - 0.9, 2.2, LD - 0.9, M.rock, 0, -3.1, 0, { round: 0.3 });
   box(root, LW - 3.5, 1.2, LD - 3.5, M.rock, 0, -4.6, 0, { round: 0.5 });
 
+  // Garagem: vaga de 3,6 m entre a parede leste (x = 6,3) e os pilares; marquise da laje até GAR_X1; carro no meio
+  const GAR_X1 = 9.9, CARRO_X = 8.0;
   // ================================================================
   // Casa — térreo
   // ================================================================
   box(root, 12.6, FL, 7.6, M.concrete, 0, FL / 2, 0);                 // base
-  box(root, 2.3, 0.06, 7.6, M.concrete, 7.45, 0.03, 0);                // piso da garagem
   box(root, 11.75, 0.01, 6.75, M.woodFloor, 0, FL + 0.005, 0, { cast: false }); // piso de madeira
 
   // Fachada sul: parede sólida com porta e janela lateral estreita
@@ -510,19 +511,19 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   // Laje intermediária com beiral
   // laje em 4 partes deixando o vão da escada (VOID_X0..ST_X1 × ST_Z0..ST_Z1)
   {
-    const sx0 = -6.35, sx1 = 8.35, sz0 = -3.85, sz1 = 3.85, y = SLAB0 + 0.175;
+    const sx0 = -6.35, sx1 = GAR_X1, sz0 = -3.85, sz1 = 3.85, y = SLAB0 + 0.175; // sx1: marquise sobre a vaga
     const part = (x0, x1, z0, z1) => box(root, x1 - x0, 0.35, z1 - z0, M.slab, (x0 + x1) / 2, y, (z0 + z1) / 2);
     part(sx0, sx1, ST_Z1, sz1);
     part(sx0, VOID_X0, sz0, ST_Z1);
     part(ST_X1, sx1, sz0, ST_Z1);
     part(VOID_X0, ST_X1, sz0, ST_Z0);
   }
-  box(root, 14.7, 0.02, 0.02, M.frame, 1.0, SLAB0 + 0.02, 3.86, { cast: false }); // friso de sombra
+  box(root, GAR_X1 + 6.35, 0.02, 0.02, M.frame, (GAR_X1 - 6.35) / 2, SLAB0 + 0.02, 3.86, { cast: false }); // friso de sombra
   // pilares da garagem
-  for (const z of [3.55, -3.55]) box(root, 0.18, SLAB0, 0.18, M.frame, 8.15, SLAB0 / 2, z);
+  for (const z of [3.55, -3.55]) box(root, 0.18, SLAB0, 0.18, M.frame, GAR_X1 - 0.2, SLAB0 / 2, z);
   // spots embutidos no beiral
   const downGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.02, 20);
-  for (const x of [-4.8, -2.6, -0.4, 3.0, 5.0, 7.2]) {
+  for (const x of [-4.8, -2.6, -0.4, 3.0, 5.0, CARRO_X, GAR_X1 - 0.6]) {
     const d = new THREE.Mesh(downGeo, M.downlight);
     d.position.set(x, SLAB0 - 0.005, 3.72);
     root.add(d);
@@ -1096,7 +1097,16 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   }
   // caminho de pedras até a porta + calçada da garagem
   for (let i = 0; i < 9; i++) box(root, 1.5, 0.06, 0.55, M.stone, 3.0, 0.03, 4.4 + i * 0.85, { round: 0.02 });
-  box(root, 2.4, 0.05, 8.0, M.concrete, 7.45, 0.025, 7.75);
+  // piso da garagem e calçada numa laje só (antes eram duas caixas com textura esticada diferente e um degrau),
+  // com a textura em metros e juntas de dilatação a cada 2,5 m
+  {
+    const x0 = 6.3, x1 = GAR_X1, z0 = -3.8, z1 = 11.75;
+    const piso = M.concrete.clone();
+    piso.map = M.concrete.map.clone(); piso.map.repeat.set(0.4, 0.4); piso.map.needsUpdate = true;
+    tiledBox(root, x1 - x0, 0.06, z1 - z0, piso, (x0 + x1) / 2, 0.03, (z0 + z1) / 2);
+    const junta = std({ color: 0x5f5d59, roughness: 0.95 });
+    for (let z = z0 + 2.5; z < z1 - 0.5; z += 2.5) box(root, x1 - x0 - 0.02, 0.004, 0.025, junta, (x0 + x1) / 2, 0.061, z, { cast: false });
+  }
   // balizadores (luz de jardim)
   const bollards = [];
   for (const [x, z] of [[1.9, 5.6], [4.1, 5.6], [1.9, 8.2], [4.1, 8.2], [1.9, 10.8], [4.1, 10.8]]) {
@@ -1142,7 +1152,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   let evCablePlug = null, evCableHolster = null;
   const carGerado = new THREE.Group(); // carro gerado em código (some se houver modelos/carro.glb)
   {
-    car.position.set(7.1, 0.05, 7.4);   // afastado do pilar da garagem (x = 8.15)
+    car.position.set(CARRO_X, 0.05, 7.4);   // no meio da vaga (parede x = 6,3, pilares x = GAR_X1 − 0,2)
     car.scale.setScalar(0.88);
     car.rotation.y = Math.PI; // frente (faróis, +z local) virada para o fundo da garagem
     // Carro elétrico moderno (sedã fastback). Frente = +z local, comprimento ±2,27, largura 1,8.
@@ -1358,7 +1368,16 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
       const inv = car.matrixWorld.clone().invert();
       const partes = [[], [], [], []], caixas = [0, 1, 2, 3].map(() => new THREE.Box3());
       for (const o of rodas) {
-        const g = o.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
+        // modelos comprimidos (meshopt) guardam posição/normal em inteiros normalizados (−1..1): em float antes de
+        // levar para as coordenadas do carro, senão os valores passam de 1 e são cortados (roda deformada)
+        const g = new THREE.BufferGeometry();
+        for (const [n, at] of Object.entries(o.geometry.attributes)) {
+          const f = new Float32Array(at.count * at.itemSize);
+          for (let v = 0; v < at.count; v++) for (let c = 0; c < at.itemSize; c++) f[v * at.itemSize + c] = at.getComponent(v, c);
+          g.setAttribute(n, new THREE.BufferAttribute(f, at.itemSize));
+        }
+        if (o.geometry.index) g.setIndex(Array.from(o.geometry.index.array));
+        g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
         const pos = g.attributes.position, ix = g.index ? g.index.array : null;
         const nTri = (ix ? ix.length : pos.count) / 3, listas = [[], [], [], []];
         for (let t = 0; t < nTri; t++) {
@@ -1371,8 +1390,8 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
           const sub = new THREE.BufferGeometry();
           for (const [n, at] of Object.entries(g.attributes)) sub.setAttribute(n, at);
           sub.setIndex(l);
-          sub.computeBoundingBox();
-          caixas[qd].union(sub.boundingBox);
+          // caixa só com os vértices desta roda (computeBoundingBox mediria o buffer inteiro, compartilhado pelas 4)
+          for (const v of l) caixas[qd].expandByPoint(new THREE.Vector3(pos.getX(v), pos.getY(v), pos.getZ(v)));
           const mesh = new THREE.Mesh(sub, o.material);
           mesh.castShadow = true; mesh.receiveShadow = true;
           partes[qd].push(mesh);
@@ -1444,8 +1463,8 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
       root.add(g);
       return g;
     };
-    // porta de carga do carro na vaga (V3 abaixo): x = 7,1 − 0,915·0,88; z = 3,55 − 1,98·0,88
-    evCablePlug = tubo([[x0 + 0.06, yc - 0.22, zc], [x0 + 0.1, 0.45, zc - 0.05], [x0 + 0.13, 0.07, 2.0], [6.24, 0.2, 1.84], [6.27, 0.52, 1.81]]);
+    const px = CARRO_X - 0.865 * 0.88; // porta de carga do carro na vaga
+    evCablePlug = tubo([[x0 + 0.06, yc - 0.22, zc], [x0 + 0.1, 0.45, zc - 0.05], [x0 + 0.16, 0.08, 2.05], [(x0 + px) / 2, 0.08, 1.92], [px - 0.06, 0.2, 1.84], [px - 0.01, 0.52, 1.81]]);
     evCableHolster = tubo([[x0 + 0.06, yc - 0.22, zc], [x0 + 0.08, 0.55, zc + 0.05], [x0 + 0.09, 0.38, zc + 0.2], [x0 + 0.06, yc - 0.33, zc + 0.24]]);
   }
 
@@ -1484,7 +1503,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     const spots = [];
     for (let x = -14; x <= 14; x += 0.9) spots.push([x, -10.9, 0.62 + Math.sin(x * 1.3) * 0.12]);
     for (let z = -9; z <= 7; z += 0.95) spots.push([-14.8, z, 0.6 + Math.cos(z) * 0.1]);
-    for (const [x, z] of [[-7.3, 4.4], [-7.3, 6.8], [5.85, 4.3], [1.1, 7.75], [9.4, 3.6], [9.6, -1.2], [9.5, -3.4], [-7.2, -2.0], [-7.0, 0.5]]) spots.push([x, z, 0.5 + Math.abs((x * z) % 0.25)]);
+    for (const [x, z] of [[-7.3, 4.4], [-7.3, 6.8], [5.85, 4.3], [1.1, 7.75], [10.8, 3.6], [10.9, -1.2], [10.8, -3.4], [-7.2, -2.0], [-7.0, 0.5]]) spots.push([x, z, 0.5 + Math.abs((x * z) % 0.25)]);
     let sd = 4242;
     const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647);
     const todos = spots.map(([x, z, S]) => arbusto(x, 0, z, S * 1.5, rnd));
@@ -1583,7 +1602,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(cor, 3));
     const grassMat = std({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.95 });
-    const blocked = [[-9.4, -7.1, 7.7, 10.1], [-6.8, 8.9, -4.2, 4.2], [-7.1, 2.0, 3.8, 6.9], [-7.0, -0.1, 7.1, 12], [2.1, 3.9, 3.8, 12], [6.1, 8.8, -4, 12]];
+    const blocked = [[-9.4, -7.1, 7.7, 10.1], [-6.8, 8.9, -4.2, 4.2], [-7.1, 2.0, 3.8, 6.9], [-7.0, -0.1, 7.1, 12], [2.1, 3.9, 3.8, 12], [6.1, GAR_X1 + 0.2, -4, 12]];
     const ok = (x, z) => !blocked.some(([a, b, c, d]) => x > a && x < b && z > c && z < d);
     const pts = [];
     let seed = 7;
@@ -1676,7 +1695,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   let sonarBeam = null;
   if (sensores.garagem) {
     const g = new THREE.Group();
-    g.position.set(7.1, 0, SONAR_Z - 0.06);
+    g.position.set(CARRO_X, 0, SONAR_Z - 0.06);
     root.add(g);
     box(g, 0.12, 1.25, 0.12, M.frame, 0, 0.625, 0);
     box(g, 0.3, 0.14, 0.015, M.pcbBlue, 0, 0.7, 0.07);
@@ -1692,7 +1711,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     sonarBeam.rotation.x = -Math.PI / 2;
     sonarBeam.userData.dynamic = true;  // ponta no sensor, abre em direção ao carro
     g.add(sonarBeam);
-    anchor('garagem', 7.1, 1.45, SONAR_Z);
+    anchor('garagem', CARRO_X, 1.45, SONAR_Z);
   }
 
   // DHT11 (D2 → V4/V5) na parede leste, perto da janela — caixa azul
@@ -1807,7 +1826,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   addPoint(0xffc98a, 18, 9, 2.6, 2.8, -1.2, 'cozinha');      // jantar/cozinha
   addPoint(0xffb86b, 26, 8, 2.0, UFL + 2.5, -0.8, 'quarto'); // superior (quarto/escritório)
   // área externa: só a qualidade alta usa luzes reais; as outras usam poças de luz (mesmo visual, custo ~zero)
-  const eaves = [[-4.8, 3.72, -4.8, 5.2, 0.12], [-0.4, 3.72, -0.4, 5.2, 0.12], [3.0, 3.72, 3.0, 4.9, 0.09], [7.2, 3.72, 7.2, 2.2, 0.09]];
+  const eaves = [[-4.8, 3.72, -4.8, 5.2, 0.12], [-0.4, 3.72, -0.4, 5.2, 0.12], [3.0, 3.72, 3.0, 4.9, 0.09], [CARRO_X, 3.72, CARRO_X, 2.2, 0.09]];
   if (hi) {
     addPoint(0xffc27a, 10, 7, 3.0, 0.9, 7.6, 'externa'); // caminho
     for (const [x, z, tx, tz] of eaves) {

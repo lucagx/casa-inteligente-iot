@@ -106,8 +106,12 @@ app.use(express.json());
 // configuração lida pela casa 3D (mesma fonte do servidor: .env SENSORES)
 app.get("/js/config.js", (req, res) => {
   res.type("application/javascript").set("Cache-Control", "no-store");
-  // modelo 3D opcional do carro (public/modelos/carro.glb): sem ele a casa usa o carro gerado em código
-  const MODELOS = { carro: require("fs").existsSync(path.join(__dirname, "public/modelos/carro.glb")) };
+  // modelos 3D opcionais do carro (public/modelos/*.glb): sem nenhum, a casa usa o carro gerado em código.
+  // CARRO_MODELO no .env escolhe qual (nome sem .glb); senão "carro", senão o primeiro da pasta
+  let carros = [];
+  try { carros = require("fs").readdirSync(path.join(__dirname, "public/modelos")).filter((f) => f.endsWith(".glb")).map((f) => f.slice(0, -4)).sort(); } catch { /* sem pasta */ }
+  const pedido = (process.env.CARRO_MODELO || "").trim();
+  const MODELOS = { carros, carro: carros.includes(pedido) ? pedido : carros.includes("carro") ? "carro" : carros[0] || null };
   res.send(`// gerado pelo servidor a partir do .env (SENSORES) e da pasta public/modelos\nexport const SENSORES = ${JSON.stringify(SENSORES)};\nexport const MODELOS = ${JSON.stringify(MODELOS)};\n`);
 });
 app.use(express.static(path.join(__dirname, "public")));

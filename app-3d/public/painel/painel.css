@@ -204,6 +204,35 @@ body { padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
 .tabbar svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .tabbar a.on { color: var(--ink); background: var(--card); }
 .tabbar a.on svg { color: var(--cyan); }
+.tabbar a { position: relative; }
+.badge { position: absolute; top: 2px; left: calc(50% + 6px); min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
+  background: var(--amber); color: #0b111b; font: 700 10px/16px var(--body); font-style: normal; text-align: center; }
+
+/* ---------- rotina (I5) ---------- */
+.sugs { display: flex; flex-direction: column; gap: 10px; }
+#sugCasa { margin-bottom: 18px; }
+.sug { display: flex; flex-direction: column; gap: 6px; border-color: rgba(255, 194, 122, 0.35); background: rgba(255, 194, 122, 0.07); }
+.sug.acao, .sug.ausente { border-color: rgba(94, 231, 255, 0.4); background: rgba(94, 231, 255, 0.07); }
+.sug b { font-size: 15px; font-weight: 500; }
+.sug p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.sbtn { display: flex; gap: 8px; margin-top: 4px; }
+.sbtn .ok { background: var(--ink); color: #0b111b; border-color: transparent; }
+.auto { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13.5px; }
+.rdias { display: flex; flex-direction: column; }
+.rdia { display: grid; grid-template-columns: 1fr 64px 64px; gap: 6px; padding: 7px 4px; border-bottom: 1px solid var(--stroke); font-size: 13.5px; }
+.rdia:last-child { border-bottom: 0; }
+.rdia b { font-family: var(--mono); font-weight: 400; text-align: right; }
+.rdia.cab { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.08em; }
+.rdia.cab b { font-family: var(--body); }
+.rdia.hoje span { color: var(--cyan); }
+.padrao { display: flex; flex-direction: column; gap: 5px; }
+.prow { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.pbar { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; }
+.pbar i { height: 16px; border-radius: 3px; background: rgba(255, 255, 255, 0.04); position: relative; }
+.pbar i::after { content: ''; position: absolute; inset: 0; border-radius: 3px; background: var(--amber); opacity: calc(var(--a) * 0.6); }
+.pbar i.liga { outline: 1px solid var(--amber); }
+.prow.eixo em { font-family: var(--mono); font-size: 9px; color: var(--faint); font-style: normal; }
+#dev-ausente.on .dicon { background: var(--cyan); box-shadow: 0 0 24px rgba(94, 231, 255, 0.4); }
 .toast { z-index: 30; }
 
 /* ---------- histórico (I2) ---------- */
@@ -280,3 +309,51 @@ body { padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
 .tarifas { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0 4px; }
 .tarifas span { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); }
 .tarifas b { font-family: var(--display); font-size: 19px; color: var(--ink); }
+
+/* ---------- conforto da janela (I6) ---------- */
+.conf { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin-bottom: 10px; padding-bottom: 26px; }
+.clim { display: flex; flex-direction: column; gap: 2px; }
+.clim .k { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.clim b { font-family: var(--display); font-size: 26px; letter-spacing: -0.02em; }
+.clim small { font-size: 12px; color: var(--faint); }
+.cescala { grid-column: span 2; position: relative; height: 34px; margin-top: 4px; border-radius: 8px;
+  background: linear-gradient(90deg, rgba(94, 231, 255, 0.25), rgba(255, 255, 255, 0.05) 50%, rgba(255, 120, 60, 0.3)); }
+.cescala i { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); }
+.cescala i.fw { background: var(--faint); opacity: 0.7; }
+.cescala i.t { background: var(--amber); width: 3px; }
+.cescala em { position: absolute; bottom: -16px; transform: translateX(-50%); font: 9.5px var(--mono); color: var(--faint); font-style: normal; white-space: nowrap; }
+#dev-conforto.on .dicon { background: var(--cyan); box-shadow: 0 0 24px rgba(94, 231, 255, 0.4); }
+#cfAjustes { margin-top: 10px; }
+
+/* ---------- insights e alertas (I7) ---------- */
+#alertasCasa { margin-bottom: 12px; }
+.alerta { display: flex; flex-direction: column; gap: 6px; border-color: rgba(255, 194, 122, 0.5); background: rgba(255, 194, 122, 0.1); }
+.alerta.critico { border-color: var(--red); background: rgba(255, 77, 106, 0.16); animation: firing 1s steps(2) infinite; }
+.alerta.info { border-color: rgba(94, 231, 255, 0.4); background: rgba(94, 231, 255, 0.07); }
+.alerta b { font-size: 15px; font-weight: 500; }
+.alerta p { margin: 0; font-size: 13px; color: var(--muted); }
+.insights { display: flex; flex-direction: column; gap: 12px; }
+.ink { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.ink span { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); }
+.ink b { font-family: var(--display); font-size: 17px; color: var(--ink); letter-spacing: -0.02em; white-space: nowrap; }
+.inhoras { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; align-items: end; height: 38px; }
+.inhoras i { border-radius: 2px; background: rgba(255, 255, 255, 0.07); }
+.inhoras i.n { background: var(--cyan); opacity: 0.75; }
+.infrases { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13.5px; line-height: 1.45; }
+
+/* ---------- privacidade (I8) ---------- */
+.cons { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; border-color: rgba(94, 231, 255, 0.4); background: rgba(94, 231, 255, 0.07); }
+.cons b { font-size: 15px; font-weight: 500; }
+.cons p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.pausa { margin-bottom: 12px; padding: 10px 12px; border-radius: 12px; border: 1px dashed var(--stroke); }
+.pausa a { color: var(--cyan); }
+.pvtab { display: flex; flex-direction: column; }
+.pvtab > div { display: flex; flex-direction: column; gap: 2px; padding: 9px 2px; border-bottom: 1px solid var(--stroke); }
+.pvtab > div:last-child { border-bottom: 0; }
+.pvtab b { font-size: 14px; font-weight: 500; }
+.pvtab span { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+.pvtab .nao b { color: var(--green); }
+.pvret { margin: 12px 0; }
+.pvbtns { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.ibtn.perigo { color: #ffc3cc; border-color: rgba(255, 77, 106, 0.45); }
+#dev-coleta.on .dicon { background: var(--green); box-shadow: 0 0 24px rgba(54, 227, 154, 0.4); }

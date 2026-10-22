@@ -127,12 +127,18 @@ na placa nem no Blynk ainda) que vive no servidor (`server/carregador.js`, `stat
 - Casa 3D: wallbox na parede leste da garagem com tela da bateria e LED (azul conectado, âmbar aguardando,
   verde pulsando carregando), cabo até a porta de carga do carro e hotspot. Painel do celular: bloco "Carro elétrico".
 - API: `POST /api/carregador {"ligado":true}` ou `{"foraDePonta":true}` (opcional `"origem":"painel"|"casa3d"`).
-- **Modelo 3D do carro (opcional):** coloque um carro em glTF binário em `public/modelos/carro.glb` e a casa 3D usa ele no
-  lugar do carro gerado em código (o servidor avisa em `/js/config.js`, `MODELOS.carro`). Escala, centro e altura são
-  ajustados sozinhos (comprimento de ~4,5 m); vidros (nomes com glass/window/vidro ou material transparente) viram vidro
-  preto transparente; nós com wheel/tire/rim/roda/pneu no nome giram quando o carro anda. Se a frente vier ao contrário,
-  `?carroGiro=180`. Use um modelo com licença livre (ex.: CC-BY no Sketchfab, com o crédito aqui no README) e prefira
-  arquivos de até ~10 MB (o Render serve o arquivo a cada visita).
+- **Modelo 3D do carro:** qualquer glTF binário em `public/modelos/*.glb` substitui o carro gerado em código (o servidor
+  lista a pasta em `/js/config.js`, `MODELOS`). `CARRO_MODELO` no `.env` escolhe qual (nome sem `.glb`); sem ela, vale
+  `carro.glb` ou o primeiro em ordem alfabética; `?carro=2024_byd_seal` troca na hora e `?carroGiro=180` vira a frente.
+  Ajustes automáticos: comprimento de ~4 m na cena, centralizado, rodas no chão; vidros com *transmission* (renderizam a
+  cena 2×) viram vidro preto translúcido nas janelas e lente clara nos faróis/lanternas; peças de roda com as 4 rodas numa
+  malha só (pneu, aro, disco) são divididas por quadrante e cada roda gira no próprio eixo. Aceita geometria comprimida
+  com meshopt (`EXT_meshopt_compression`). O crédito do modelo (lido do próprio arquivo) aparece no canto da casa 3D.
+- **Modelos incluídos:** *2024 BYD Seal* e *2024 BYD Dolphin*, de **Ddiaz Design** (Sketchfab), licença
+  **CC BY-NC-SA 4.0** — uso não comercial, com atribuição; as cópias daqui são versões com a geometria comprimida
+  (meshopt, `gltf-transform optimize --compress meshopt`) e seguem a mesma licença.
+  Fontes: https://sketchfab.com/3d-models/2024-byd-seal-2e82d2aaaa3d47debf39b1160d3fe376 e
+  https://sketchfab.com/3d-models/2024-byd-dolphin-e8f3cf54c0e545b1b290d7a55ca77fca
 
 ### Privacidade e consentimento (ética do IoB)
 
