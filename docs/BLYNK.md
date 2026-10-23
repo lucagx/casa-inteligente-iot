@@ -76,3 +76,72 @@ Só no modo ao vivo (com `BLYNK_TOKEN`); o modo demonstração não fala com o B
 **Cota:** os envios novos ficam abaixo de ~9 mil por mês no pior caso (consumo no máximo a cada 5 min e só quando
 muda, bateria ~1 por 10 min enquanto carrega, cenas e externa quando mudam). Em 21/10 a conta estava com 5,9 mil de
 100 mil usados.
+
+## K2 — Dashboard web e app do celular
+
+Os dois mostram a mesma casa, com o mesmo layout em quatro faixas: **agora**, **controles**, **energia e carro**,
+**histórico e log**. LDR e HC-SR04 (V6, V10, V12) ficam sem widget.
+
+Antes de começar, uma regra do firmware que aparece no dashboard: com o **modo automático ligado (V3 = 1)**, a placa
+ignora os comandos de luz, porta e janela (o switch volta sozinho). O painel do celular e a casa 3D trocam para o
+manual sozinhos; no Blynk, desligue o automático antes de mexer nos atuadores.
+
+### Web (Blynk.Console)
+
+**Onde:** Developer Zone → My Templates → template da casa → **Edit** → aba **Web Dashboard**. Arraste os widgets da
+lista à esquerda, clique na engrenagem de cada um para escolher o datastream e o título, e **Save** no fim.
+Se algum widget aparecer com cadeado (pago no plano Free), use o alternativo indicado.
+
+| Faixa | Widget | Datastream | Título e ajustes |
+|---|---|---|---|
+| 1 · Agora | Gauge | V4 | Temperatura · 0–50 °C |
+| 1 · Agora | Gauge | V5 | Umidade · 0–100 % |
+| 1 · Agora | LED | V11 | Presença · cor verde |
+| 1 · Agora | Label | V14 | Detecções hoje |
+| 1 · Agora | Label | V8 | Alarme (mostra DESARMADO / ARMADO / ALARME ATIVO) |
+| 2 · Controles | Switch | V3 | Modo automático · rótulos ON "Auto", OFF "Manual" |
+| 2 · Controles | Switch | V0 | Luz geral (D1) |
+| 2 · Controles | Switch | V1 | Porta · ON "Destrancada", OFF "Trancada" |
+| 2 · Controles | Switch | V2 | Janela · ON "Abrir", OFF "Fechar" |
+| 2 · Controles | Label | V7 | Status da janela |
+| 2 · Controles | Switch | V9 | Alarme armado |
+| 2 · Controles | Menu (alternativo: Slider 0–4) | V16 | Cena · itens na ordem: "—", "Cheguei", "Saí", "Dormir", "Apresentação" |
+| 2 · Controles | Slider | V23 | Luz externa · 0–100 %, passo 10 |
+| 3 · Energia e carro | Switch | V18 | Carregador do carro |
+| 3 · Energia e carro | Gauge | V25 | Bateria do carro · 0–100 % |
+| 3 · Energia e carro | Label | V15 | Consumo hoje · kWh |
+| 4 · Histórico | Chart | V4 e V5 | Temperatura e umidade · períodos 1h, 1d, 1w (o Free guarda 1 semana) |
+| 4 · Histórico | Chart | V11 | Presença · tipo barra |
+| 4 · Histórico | Terminal | V13 | Log da casa · largura total (fica vazio até a F3) |
+
+No Menu, o primeiro item corresponde ao valor 0, o segundo ao 1, e assim por diante — a ordem precisa ser exatamente
+essa para bater com o servidor (`server/blynk.js`).
+
+### App do celular (Blynk IoT)
+
+**Onde:** app Blynk IoT → Developer Mode ligado (perfil) → abra o dispositivo → **chave inglesa** (editar o dashboard
+do template) → **+** para adicionar widgets. Toque em cada widget para escolher o datastream. Tudo que for configurado
+aqui vale para o template, não só para este celular.
+
+| Faixa | Widget | Datastream | Ajustes |
+|---|---|---|---|
+| 1 | Gauge (×2) | V4, V5 | Temperatura °C, umidade % |
+| 1 | LED | V11 | Presença |
+| 1 | Value Display | V14 | Detecções hoje |
+| 1 | Value Display | V8 | Alarme |
+| 2 | Segmented Switch | V3 | Dois segmentos: "Manual" (0) e "Auto" (1) |
+| 2 | Button, modo **Switch** (×4) | V0, V1, V2, V9 | Luz, Porta, Janela, Alarme |
+| 2 | Value Display | V7 | Janela (ABERTA/FECHADA) |
+| 2 | Menu | V16 | Mesmos itens e ordem do web |
+| 2 | Slider | V23 | Luz externa 0–100, passo 10 |
+| 3 | Button, modo Switch | V18 | Carregador |
+| 3 | Gauge | V25 | Bateria % |
+| 3 | Value Display | V15 | Consumo hoje kWh |
+| 4 | SuperChart | V4 + V5 | Períodos 1h, 1d, 1w |
+| 4 | SuperChart | V11 | Presença, barras |
+| 4 | Terminal | V13 | Log |
+
+### Capturas para o relatório (E1)
+
+Com a placa ligada e o servidor ao vivo, capture o dashboard web inteiro e o app do celular (uma tela de controles e
+uma de histórico). Salve em `docs/capturas/blynk/` como `web-dashboard.png`, `app-controles.png` e `app-historico.png`.
