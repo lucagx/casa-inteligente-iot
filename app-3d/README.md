@@ -6,10 +6,15 @@ acontece na casa virtual, e o que você toca na casa virtual acontece no protobo
 ```
 Protoboard (sensores/atuadores)
       │
-  NodeMCU  ── Wi-Fi ──► Blynk Cloud ◄── HTTP ── server.js ── SSE (tempo real) ──► navegador / celular (3D)
-                             ▲                                                      │
+  NodeMCU  ── Wi-Fi ──► Blynk Cloud ◄── HTTP ── server.js ── SSE (tempo real) ──► casa 3D e painel do celular
+                             ▲            (get, update, logEvent)   │
+                             │                                      └── Supabase (histórico, rotina, escolhas)
                              └──────────────── comandos (luz, porta, janela…) ◄────┘
 ```
+
+Diagrama completo da arquitetura final: [`../docs/arquitetura_iot_iob.png`](../docs/arquitetura_iot_iob.png).
+Módulos do servidor (`server/`): `history.js` (histórico), `consumo.js`, `carregador.js`, `rotina.js`, `conforto.js`,
+`insights.js` (insights e alertas), `cenas.js` e `blynk.js` (datastreams do servidor, eventos com push e Terminal V13).
 
 ## O que cada componente faz na casa 3D
 
@@ -44,6 +49,11 @@ e o servidor não lê nem simula V6/V10/V12. O código continua: `SENSORES=ldr,g
 | `PAINEL_SENHA` / `PAINEL_USUARIO` | Senha do painel (Basic Auth, usuário padrão `casa`). Obrigatória antes de publicar: o link controla luz, porta e alarme. Vazia = aberto (dev). `/healthz` fica sempre aberto, sem dados, para o health check |
 | `DATABASE_URL` | Postgres do histórico (Supabase/Neon). Vazio = memória. Ignorado no modo demonstração. Veja "Histórico" abaixo |
 | `HISTORICO_POLL_MS` | Consulta de fundo ao Blynk sem página aberta, para o histórico (padrão 60000; `0` desliga) |
+| `CONSUMO_W`, `TARIFA_KWH`, `TARIFA_BRANCA`, `META_MENSAL_KWH` | Potências, tarifa convencional/branca e meta mensal do consumo (aba Consumo) |
+| `CONSUMO_V15` | `1` publica o consumo do dia (kWh) no V15 do Blynk, só quando muda (datastream criado, ver `../docs/BLYNK.md`) |
+| `CARREGADOR_KW`, `BATERIA_KWH` | Carregador virtual do carro elétrico (padrão 2,2 kW e 40 kWh) |
+| `CARRO_MODELO` | Modelo 3D do carro em `public/modelos` (nome sem `.glb`); vazio = o primeiro em ordem alfabética (BYD Dolphin) |
+| `CONFORTO_V17` | `1` publica o limite aprendido da janela no V17 (só quando o firmware passar a ler esse pino) |
 
 ## Rodando
 
@@ -59,8 +69,8 @@ regras do firmware (incluindo a distância do carro na garagem). Serve de plano 
 ### Ligando à placa de verdade
 
 1. Grave o firmware pela tarefa **ESP8266: gravar pela USB** (`Ctrl+Shift+B`), com `secrets.h` preenchido.
-2. No Blynk.Console, no template, garanta os datastreams **V0 a V5, V7 a V9, V11 e V14**
-   (V14 *Integer*; V6/V10/V12 só se religar os sensores opcionais).
+2. No Blynk.Console, no template, crie os datastreams da tabela de `../docs/BLYNK.md` (20 no total: V0 a V16, V18, V23
+   e V25). V6, V10 e V12 ficam criados mas desativados (sensores opcionais).
 3. Copie `.env.example` para `.env` e preencha `BLYNK_TOKEN` e `BLYNK_SERVER`
    (a região do seu Blynk).
 4. `npm start` — o selo no topo muda para **Blynk ao vivo** e **NodeMCU online**.
@@ -341,6 +351,21 @@ Eventos vêm do mais novo ao mais antigo. Ao vivo, cada evento novo também cheg
 como `event: evento` (mesmo formato). Banco fora do ar → 503 nas duas rotas; a casa continua funcionando
 e a fila é gravada quando o banco volta. As cenas (I4) já registram: cada comando delas passa por
 `comandar(pino, valor, "cena")` no `server.js` (que chama `historico.comando`) e a cena em si vira um evento `cena`.
+
+## Blynk: o que o servidor faz além de ler e comandar (`server/blynk.js`)
+
+Só no modo ao vivo. Passo a passo do Console (datastreams, dashboard, eventos e automações): [`../docs/BLYNK.md`](../docs/BLYNK.md).
+
+- **Datastreams do servidor (K1):** V16 cena, V18 carregador, V23 luz externa e V25 bateria do carro são publicados quando
+  mudam e lidos de volta: mexer neles no app do Blynk ou numa automação roda a cena, liga o carregador ou acende a externa
+  (origem "Blynk" no histórico). Leitura atrasada não desfaz um envio (sem eco). V15 = consumo do dia.
+- **Eventos e push (K3):** os alertas da aba IoB viram eventos do Blynk pela API HTTP (`logEvent`): `porta_aberta`,
+  `calor_janela` e `bateria_baixa`, mais o `resumo_diario` às 21h. No máximo 90 por dia (o Blynk aceita 100) e sem repetir o
+  mesmo em 15 min. O push de **invasão** sai da placa (firmware 1.3.0); a placa offline usa o evento embutido do Blynk.
+- **Terminal V13 (F3):** cada evento do histórico vira uma linha (`20:14 luz ligada (painel)`); a placa escreve as suas
+  (regra automática de luz e janela, alarme) e o servidor não repete essas.
+- **Automações do Console (5 no plano Free):** alarme às 23h, luz externa no pôr do sol e às 0h30, carregador às 22h
+  (seg a sex). As que dependem do servidor só agem quando ele lê o Blynk; o monitor do Render (`/healthz`) o mantém acordado.
 
 ## Observações
 
