@@ -13,6 +13,11 @@
  *     Só conta se o valor lido mudou desde a leitura anterior E é diferente do que o servidor publicou —
  *     assim uma leitura atrasada (de antes do nosso envio chegar) não desfaz o que acabamos de mandar.
  * Pino sem datastream (ainda não criado no Console): o envio falha, fica 10 min sem tentar de novo.
+ *
+ * Eventos (K3): os alertas da I7 viram eventos do Blynk (linha do tempo + push no celular) pela API HTTP
+ * (/external/api/logEvent), sem mexer no firmware. "NodeMCU offline" fica com o evento embutido do Blynk.
+ * O Blynk aceita 100 logEvent por dia por dispositivo: o servidor para em LIMITE_DIA e não repete o mesmo
+ * evento em menos de REPETIR_MS. O resumo do dia (insights) vai às 21h como "resumo_diario".
  */
 
 const PINOS = { cena: "V16", carregador: "V18", externa: "V23", bateria: "V25" };
@@ -21,6 +26,10 @@ const CENAS = [null, "cheguei", "sai", "dormir", "apresentacao"];
 // pinos que o app do Blynk e as automações podem mudar (o servidor lê junto com os sensores)
 const ENTRADAS = [PINOS.cena, PINOS.carregador, PINOS.externa];
 const ESPERA_FALHA_MS = 10 * 60000;
+// alerta da I7 (server/insights.js) → código do evento no Console (Events & Notifications)
+const EVENTOS = { invasao: "invasao", porta: "porta_aberta", calor: "calor_janela", bateria: "bateria_baixa" };
+const RESUMO = "resumo_diario";
+const LIMITE_DIA = 90, REPETIR_MS = 15 * 60000, MAX_TEXTO = 250;
 
 /** Valores que o Blynk deve mostrar para um state do servidor (strings, como o Blynk devolve). */
 function saida(state) {
@@ -90,4 +99,32 @@ function criarPonte({ enviar, executar, avisar = () => {}, agora = () => Date.no
   return { publicar, entrada, entradas: ENTRADAS };
 }
 
-module.exports = { criarPonte, saida, acao, PINOS, CENAS, ENTRADAS };
+/**
+ * enviar(código, descrição) → Promise (logEvent no Blynk) · avisar(texto) opcional
+ * alerta(a): a = alerta da I7 ({ id, titulo, texto }); resumo(texto): resumo do dia.
+ * Devolvem true se o evento foi mandado (false = sem código, repetido ou acima do limite do dia).
+ */
+function criarEventos({ enviar, avisar = () => {}, agora = () => Date.now() }) {
+  const ultimo = {};
+  let dia = null, hoje = 0;
+
+  function mandar(codigo, texto) {
+    const t = agora(), d = new Date(t).toDateString();
+    if (d !== dia) { dia = d; hoje = 0; }
+    if (ultimo[codigo] !== undefined && t - ultimo[codigo] < REPETIR_MS) return false;
+    if (hoje >= LIMITE_DIA) return false;
+    ultimo[codigo] = t;
+    hoje++;
+    const desc = texto.length > MAX_TEXTO ? `${texto.slice(0, MAX_TEXTO - 1)}…` : texto;
+    Promise.resolve().then(() => enviar(codigo, desc))
+      .catch((err) => avisar(`evento ${codigo}: ${err.message} (o evento existe no Console, com notificação ligada?)`));
+    return true;
+  }
+
+  return {
+    alerta: (a) => (EVENTOS[a.id] ? mandar(EVENTOS[a.id], `${a.titulo}. ${a.texto}`) : false),
+    resumo: (texto) => mandar(RESUMO, texto),
+  };
+}
+
+module.exports = { criarPonte, criarEventos, saida, acao, PINOS, CENAS, ENTRADAS, EVENTOS, RESUMO };

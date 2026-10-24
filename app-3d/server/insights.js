@@ -12,7 +12,7 @@
  *   - NodeMCU offline há mais de 2 min (modo ao vivo)
  *   - bateria do carro abaixo de 20 % sem carregar    → ação: ligar o carregador
  * Cada alerta novo vira evento "alerta" no histórico. "Ok" silencia até a condição acabar.
- * O push pelo Blynk (eventos/notificações, K3) fica para o bloco do Blynk.
+ * aoNovo(alerta), opcional, é chamado uma vez por alerta novo — o push pelo Blynk (K3, server/blynk.js) usa.
  */
 
 const DIA_MS = 86400000, MIN = 60000;
@@ -145,8 +145,8 @@ function avaliar(s, memo, agora = Date.now()) {
   return out;
 }
 
-/** Serviço: historico · estado() · executar(acao) · aoMudar() */
-function criarAlertas({ historico, estado, executar, aoMudar }) {
+/** Serviço: historico · estado() · executar(acao) · aoMudar() · aoNovo(alerta) opcional */
+function criarAlertas({ historico, estado, executar, aoMudar, aoNovo = () => {} }) {
   const memo = {};
   const silenciados = new Set();
   const vistos = new Set();
@@ -159,7 +159,7 @@ function criarAlertas({ historico, estado, executar, aoMudar }) {
     for (const id of [...silenciados]) if (!ids.has(id)) silenciados.delete(id);
     for (const id of [...vistos]) if (!ids.has(id)) vistos.delete(id);
     for (const a of todos) {
-      if (!vistos.has(a.id)) { vistos.add(a.id); historico.evento("alerta", "sistema", a.titulo); }
+      if (!vistos.has(a.id)) { vistos.add(a.id); historico.evento("alerta", "sistema", a.titulo); aoNovo(a); }
     }
     ativos = todos.filter((a) => !silenciados.has(a.id));
     // o texto muda com o tempo ("há 12 min"): broadcast só quando muda a lista

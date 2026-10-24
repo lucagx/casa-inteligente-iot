@@ -145,3 +145,60 @@ aqui vale para o template, não só para este celular.
 
 Com a placa ligada e o servidor ao vivo, capture o dashboard web inteiro e o app do celular (uma tela de controles e
 uma de histórico). Salve em `docs/capturas/blynk/` como `web-dashboard.png`, `app-controles.png` e `app-historico.png`.
+
+## K3 — Eventos e automações
+
+### Eventos (push no celular)
+
+O servidor manda os alertas do painel IoB (I7) para o Blynk como **eventos** — aparecem na linha do tempo do
+dispositivo e chegam como notificação no app. Não depende do firmware: o servidor chama a API HTTP do Blynk
+(`/external/api/logEvent`) quando um alerta novo aparece (`server/blynk.js`).
+
+**Onde:** Developer Zone → My Templates → template da casa → **Edit** → aba **Events & Notifications** →
+**+ Add New Event**. O **Event Code** precisa ser exatamente o da tabela (é o que o servidor manda).
+
+| Nome | Event Code | Tipo | Quando o servidor manda |
+|---|---|---|---|
+| Invasão | `invasao` | Critical | movimento com o alarme armado (o buzzer disparou) |
+| Porta destrancada | `porta_aberta` | Warning | porta destrancada há mais de 10 min |
+| Calor com a janela fechada | `calor_janela` | Warning | ≥ 30 °C com a janela fechada no manual, há 2 min |
+| Bateria baixa | `bateria_baixa` | Info | carro na garagem com menos de 20 %, sem carregar |
+| Resumo do dia | `resumo_diario` | Info | às 21h, com as frases dos insights do dia |
+
+Em cada evento, na aba **Notifications**: ligue **Enable notifications** e marque **Push** para o **Device Owner**
+(e-mail é opcional). Sem a notificação ligada o Blynk recusa o evento enviado pela API.
+
+**Placa offline:** não precisa criar evento. Na mesma aba existe o evento embutido **Offline** — ligue as
+notificações dele (push) e um atraso de 2 min, para não avisar a cada queda rápida do Wi-Fi.
+
+Limites respeitados pelo servidor: o Blynk aceita 100 eventos por dia por dispositivo; o servidor para em 90 e não
+repete o mesmo evento em menos de 15 min. Cada alerta é mandado uma vez, até a condição acabar.
+
+**Testar:** com o servidor ao vivo, arme o alarme e passe a mão no PIR — o push "Invasão" deve chegar no celular e
+aparecer na linha do tempo do dispositivo no Console. Se não chegar, o log do servidor mostra
+`[blynk] evento invasao: ...` com o motivo.
+
+### Automações (5 no plano Free)
+
+**Antes:** em **Datastreams**, abra V9, V18 e V23 → **Automations** → **Use as Action** ligado e **Appears as**:
+V9 e V18 = **Switch**; V23 = **Range** (mín 0, máx 100) — com "Value" o datastream é só leitura e não dá para
+escolher um número. Depois **Save And Apply** no template. (A tela "Automation Templates" do template é do plano
+Enterprise e não é esta.)
+
+**Onde:** menu principal do Console (fora do template) → **Automations** → **+ Create Automation**. Em "When" escolha
+horário, fuso America/Sao_Paulo e a repetição; em "Do this", **Control Device** → Mini Casa Inteligente → marque só a
+propriedade da tabela e defina o valor. O Blynk Free não tem gatilho de pôr do sol: usa-se horário fixo.
+
+| # | Nome | Quando | Repetir | Propriedade | Valor | Depende do servidor? |
+|---|---|---|---|---|---|---|
+| 1 | Armar o alarme | 23:00 | Diárias | Alarme Armado (V9) | ligado | não (a placa aplica) |
+| 2 | Luz externa ao anoitecer | 18:00 | Diárias | Luz Externa (V23) | 60 | sim |
+| 3 | Apagar a luz externa | 00:30 | Diárias | Luz Externa (V23) | 0 | sim |
+| 4 | Carregar fora de ponta | 22:00 | Semanal, seg a sex | Carregador Do Carro (V18) | ligado | sim |
+
+Sobra uma automação livre. As que dependem do servidor só agem quando ele lê o Blynk (em até 60 s; com o Render
+dormindo, quando ele acordar). Para mantê-lo acordado, um monitor gratuito (UptimeRobot) chamando `/healthz` a cada
+10 min — ver `docs/HOSPEDAGEM.md`.
+
+A luz externa acende pelo servidor e, pela regra da luz geral, também acende o LED do D1 na placa. Se o modo
+automático estiver ligado, o servidor troca para o manual antes (senão o firmware apagaria o D1 sem presença).

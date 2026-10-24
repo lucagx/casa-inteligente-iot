@@ -24,6 +24,7 @@
  * CONSUMO_V15=1    : publica o consumo do dia (kWh) no V15 do Blynk a cada 5 min (depois de criar o datastream, K1).
  * Datastreams do servidor no Blynk (K1, server/blynk.js): V16 cena, V18 carregador, V23 luz externa, V25 bateria —
  *                    publicados quando mudam e lidos de volta (app do Blynk e automações acionam o servidor).
+ *                    Eventos (K3): alertas da I7 e o resumo das 21h viram eventos/push do Blynk (logEvent).
  * CARREGADOR_KW, BATERIA_KWH : carregador do carro elétrico (V3, server/carregador.js) — virtual, fora do protoboard.
  * Rotina aprendida, sugestões, automações e modo ausente (I5): server/rotina.js, rotas /api/rotina e /api/ausente.
  * Conforto adaptativo da janela (I6): server/conforto.js, rotas /api/conforto. CONFORTO_V17=1 publica o limite no V17.
@@ -309,6 +310,13 @@ async function pollDevice() {
     }
     placaVista = true;
   } catch { /* mantém último estado */ }
+}
+
+// K3: evento do Blynk (linha do tempo + push) — o código precisa existir no template (docs/BLYNK.md)
+async function blynkEvento(code, description) {
+  const url = `${base}/logEvent?token=${encodeURIComponent(TOKEN)}&code=${encodeURIComponent(code)}&description=${encodeURIComponent(description)}`;
+  const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
+  if (!r.ok) throw new Error(`Blynk ${r.status}: ${(await r.text()).slice(0, 120)}`);
 }
 
 async function blynkUpdate(pin, value) {
@@ -623,6 +631,10 @@ app.post("/api/conforto", (req, res) => {
 // Insights diários e alertas (I7) — server/insights.js
 // ------------------------------------------------------------------
 const { insights, criarAlertas, inicioDoDia } = require("./server/insights");
+// K3: push pelo Blynk (só ao vivo)
+const eventosBlynk = MODE === "live"
+  ? require("./server/blynk").criarEventos({ enviar: blynkEvento, avisar: (txt) => console.warn(`[blynk] ${txt}`) })
+  : null;
 const alertas = criarAlertas({
   historico,
   estado: () => state,
@@ -634,6 +646,7 @@ const alertas = criarAlertas({
     if (MODE === "live") setTimeout(pollBlynk, 400);
   },
   aoMudar() { state.alertas = alertas.lista(); broadcast(); },
+  aoNovo: (a) => eventosBlynk?.alerta(a),
 });
 state.alertas = [];
 alertas.iniciar();
@@ -649,19 +662,42 @@ app.get("/api/insights", async (req, res) => {
   const q = String(req.query.dia || "hoje");
   const dia = q === "hoje" ? agora : q === "ontem" ? inicioDoDia(agora) - 1 : Date.parse(q);
   if (!Number.isFinite(dia) || dia > agora) return res.status(400).json({ ok: false, error: "Dia inválido: use hoje, ontem ou uma data." });
-  const ini = inicioDoDia(dia), desde = Math.max(ini - 7 * DIA_MS, agora - RETENCAO_DIAS * DIA_MS), ate = Math.min(ini + DIA_MS, agora);
   try {
-    const [evs, lt, cons] = await Promise.all([
-      historico.eventos({ desde, ate, limite: 50000 }),
-      historico.leituras({ desde, ate, pinos: ["V0"] }),
-      calcularConsumo().catch(() => null),
-    ]);
-    const d = cons?.dias.find((x) => x.ts === ini);
-    res.json(insights({ eventos: evs.eventos, v0: { pts: lt.pinos.V0, antes: lt.antes.V0 }, dia: ini, agora, consumoDia: d ? { kWh: d.kWh, reais: d.kWh * cons.tarifa, porComodo: d.porComodo } : null }));
+    res.json(await calcularInsights(dia, agora));
   } catch (err) {
     res.status(503).json({ ok: false, error: err.message });
   }
 });
+async function calcularInsights(dia, agora = Date.now()) {
+  const ini = inicioDoDia(dia), desde = Math.max(ini - 7 * DIA_MS, agora - RETENCAO_DIAS * DIA_MS), ate = Math.min(ini + DIA_MS, agora);
+  const [evs, lt, cons] = await Promise.all([
+    historico.eventos({ desde, ate, limite: 50000 }),
+    historico.leituras({ desde, ate, pinos: ["V0"] }),
+    calcularConsumo().catch(() => null),
+  ]);
+  const d = cons?.dias.find((x) => x.ts === ini);
+  return insights({ eventos: evs.eventos, v0: { pts: lt.pinos.V0, antes: lt.antes.V0 }, dia: ini, agora, consumoDia: d ? { kWh: d.kWh, reais: d.kWh * cons.tarifa, porComodo: d.porComodo } : null });
+}
+// K3: resumo do dia no Blynk (evento resumo_diario, com push) a partir das 21h, uma vez por dia.
+// Com o Render dormindo às 21h, vai quando ele acordar (até meia-noite). O dia enviado fica na config do histórico.
+if (eventosBlynk) {
+  const RESUMO_HORA = 21;
+  let resumoDe = null;
+  historico.lerConfig("blynk").then((c) => { resumoDe = c?.resumoDe ?? null; }).catch(() => {});
+  setInterval(async () => {
+    const agora = Date.now(), dia = inicioDoDia(agora);
+    if (new Date(agora).getHours() < RESUMO_HORA || resumoDe === dia) return;
+    resumoDe = dia;
+    try {
+      const r = await calcularInsights(agora, agora);
+      if (eventosBlynk.resumo(r.frases.join(" ") || "Dia tranquilo, sem movimento registrado.")) {
+        await historico.salvarConfig("blynk", { resumoDe: dia });
+      }
+    } catch (err) {
+      console.warn(`[blynk] resumo do dia: ${err.message}`);
+    }
+  }, 60000);
+}
 
 // ------------------------------------------------------------------
 // Privacidade e consentimento (I8) — a ética do IoB: o morador decide o que fica guardado
