@@ -17,26 +17,74 @@ const P = PASSO_APRESENTACAO_MS;
 
 const CENAS = {
   cheguei: {
-    nome: "Cheguei", icone: "chegar", descricao: "Carro entra na garagem; desarma o alarme, destranca e acende sala, cozinha e externa",
+    nome: "Cheguei",
+    icone: "chegar",
+    descricao:
+      "Carro entra na garagem; desarma o alarme, destranca e acende sala, cozinha e externa",
     // o carro anda ~2,5 s até a vaga antes do resto (a casa 3D mostra a chegada)
-    passos: [["carro:entrar", 1, 2500], ["V3", 0], ["V9", 0], ["V1", 1], ["luz:sala", 100], ["luz:cozinha", 100], ["luz:externa", 100], ["luz:quarto", 0]],
+    passos: [
+      ["carro:entrar", 1, 2500],
+      ["V3", 0],
+      ["V9", 0],
+      ["V1", 1],
+      ["luz:sala", 100],
+      ["luz:cozinha", 100],
+      ["luz:externa", 100],
+      ["luz:quarto", 0],
+    ],
   },
   // casa vazia: segurança. Só a luz externa fica acesa e a janela é fechada
   sai: {
-    nome: "Saí", icone: "sair", descricao: "Só a luz externa acesa; tranca, fecha a janela, arma o alarme e o carro sai",
-    passos: [["V3", 0], ["luz:externa", 100], ["luz:sala", 0], ["luz:cozinha", 0], ["luz:quarto", 0], ["V1", 0], ["V2", 0], ["V9", 1], ["carro:sair", 1]],
+    nome: "Saí",
+    icone: "sair",
+    descricao:
+      "Só a luz externa acesa; tranca, fecha a janela, arma o alarme e o carro sai",
+    passos: [
+      ["V3", 0],
+      ["luz:externa", 100],
+      ["luz:sala", 0],
+      ["luz:cozinha", 0],
+      ["luz:quarto", 0],
+      ["V1", 0],
+      ["V2", 0],
+      ["V9", 1],
+      ["carro:sair", 1],
+    ],
   },
   // gente em casa: abajur e externa fracos; a janela fica como está (ventilação da noite)
   dormir: {
-    nome: "Dormir", icone: "lua", descricao: "Abajur do quarto a 15 % e externa a 40 %; tranca e arma; janela fica como está",
-    passos: [["V3", 0], ["luz:quarto", 15], ["luz:externa", 40], ["luz:sala", 0], ["luz:cozinha", 0], ["V1", 0], ["V9", 1]],
+    nome: "Dormir",
+    icone: "lua",
+    descricao:
+      "Abajur do quarto a 15 % e externa a 40 %; tranca e arma; janela fica como está",
+    passos: [
+      ["V3", 0],
+      ["luz:quarto", 15],
+      ["luz:externa", 40],
+      ["luz:sala", 0],
+      ["luz:cozinha", 0],
+      ["V1", 0],
+      ["V9", 1],
+    ],
   },
   apresentacao: {
-    nome: "Apresentação", icone: "play", descricao: "Tour de ~20 s por todas as luzes e atuadores para a turma ver",
+    nome: "Apresentação",
+    icone: "play",
+    descricao: "Tour de ~20 s por todas as luzes e atuadores para a turma ver",
     passos: [
-      ["V3", 0], ["luz:sala", 100, P], ["luz:cozinha", 100, P], ["luz:quarto", 100, P], ["luz:externa", 100, P],
-      ["V2", 1, P], ["V1", 1, P], ["V9", 1, P], ["V9", 0, P], ["V1", 0, P], ["V2", 0, P],
-      ["luz:todos", 0], ["V3", 1],
+      ["V3", 0],
+      ["luz:sala", 100, P],
+      ["luz:cozinha", 100, P],
+      ["luz:quarto", 100, P],
+      ["luz:externa", 100, P],
+      ["V2", 1, P],
+      ["V1", 1, P],
+      ["V9", 1, P],
+      ["V9", 0, P],
+      ["V1", 0, P],
+      ["V2", 0, P],
+      ["luz:todos", 0],
+      ["V3", 1],
     ],
   },
 };
@@ -51,15 +99,32 @@ function criarCenas({ enviar, aoMudar, aoTerminar }) {
 
   function executar(id, origem) {
     const c = CENAS[id];
-    if (!c) throw Object.assign(new Error(`Cena "${id}" não existe.`), { status: 404 });
-    if (atual) throw Object.assign(new Error(`A cena ${atual.nome} ainda está em andamento.`), { status: 409 });
-    atual = { id, nome: c.nome, origem, inicio: Date.now(), passo: 0, total: c.passos.length };
+    if (!c)
+      throw Object.assign(new Error(`Cena "${id}" não existe.`), {
+        status: 404,
+      });
+    if (atual)
+      throw Object.assign(
+        new Error(`A cena ${atual.nome} ainda está em andamento.`),
+        { status: 409 },
+      );
+    atual = {
+      id,
+      nome: c.nome,
+      origem,
+      inicio: Date.now(),
+      passo: 0,
+      total: c.passos.length,
+    };
     aoMudar({ ...atual });
     // roda em segundo plano: a resposta HTTP volta na hora e o andamento vai pelo stream (state.scene)
     (async () => {
       let erro = null;
       try {
-        for (const [i, [alvo, valor, espera = INTERVALO_MS]] of c.passos.entries()) {
+        for (const [
+          i,
+          [alvo, valor, espera = INTERVALO_MS],
+        ] of c.passos.entries()) {
           await enviar(alvo, valor);
           atual.passo = i + 1;
           aoMudar({ ...atual });
@@ -79,7 +144,13 @@ function criarCenas({ enviar, aoMudar, aoTerminar }) {
 
   return {
     executar,
-    lista: () => Object.entries(CENAS).map(([id, c]) => ({ id, nome: c.nome, icone: c.icone, descricao: c.descricao })),
+    lista: () =>
+      Object.entries(CENAS).map(([id, c]) => ({
+        id,
+        nome: c.nome,
+        icone: c.icone,
+        descricao: c.descricao,
+      })),
   };
 }
 

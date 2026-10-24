@@ -35,7 +35,11 @@ test("para sozinho em 100 % e não carrega com o carro fora", () => {
   assert.equal(f.naGaragem, false);
   f = c.entrar(as(13)); // 2 h fora: 3 % + 2 % de gasto
   assert.equal(f.bateria, 95);
-  assert.equal(f.carregando, true, "voltou abaixo de 100 % com o carregador ligado");
+  assert.equal(
+    f.carregando,
+    true,
+    "voltou abaixo de 100 % com o carregador ligado",
+  );
 });
 
 test("restaura do histórico (V24/V25/V26)", () => {

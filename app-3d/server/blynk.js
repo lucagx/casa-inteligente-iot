@@ -20,7 +20,12 @@
  * evento em menos de REPETIR_MS. O resumo do dia (insights) vai às 21h como "resumo_diario".
  */
 
-const PINOS = { cena: "V16", carregador: "V18", externa: "V23", bateria: "V25" };
+const PINOS = {
+  cena: "V16",
+  carregador: "V18",
+  externa: "V23",
+  bateria: "V25",
+};
 // V16 no Blynk: índice do menu → id da cena em server/cenas.js
 const CENAS = [null, "cheguei", "sai", "dormir", "apresentacao"];
 // pinos que o app do Blynk e as automações podem mudar (o servidor lê junto com os sensores)
@@ -28,9 +33,15 @@ const ENTRADAS = [PINOS.cena, PINOS.carregador, PINOS.externa];
 const ESPERA_FALHA_MS = 10 * 60000;
 // alerta da I7 (server/insights.js) → código do evento no Console (Events & Notifications)
 // (a invasão não está aqui: o push dela sai da placa — firmware 1.3.0, Blynk.logEvent no dispararAlarme)
-const EVENTOS = { porta: "porta_aberta", calor: "calor_janela", bateria: "bateria_baixa" };
+const EVENTOS = {
+  porta: "porta_aberta",
+  calor: "calor_janela",
+  bateria: "bateria_baixa",
+};
 const RESUMO = "resumo_diario";
-const LIMITE_DIA = 90, REPETIR_MS = 15 * 60000, MAX_TEXTO = 250;
+const LIMITE_DIA = 90,
+  REPETIR_MS = 15 * 60000,
+  MAX_TEXTO = 250;
 
 /** Valores que o Blynk deve mostrar para um state do servidor (strings, como o Blynk devolve). */
 function saida(state) {
@@ -49,17 +60,29 @@ function saida(state) {
 function acao(pino, valor) {
   const n = Number(valor);
   if (!Number.isFinite(n)) return null;
-  if (pino === PINOS.cena) return CENAS[n] ? { tipo: "cena", id: CENAS[n] } : null;
+  if (pino === PINOS.cena)
+    return CENAS[n] ? { tipo: "cena", id: CENAS[n] } : null;
   if (pino === PINOS.carregador) return { tipo: "carregador", ligado: n >= 1 };
-  if (pino === PINOS.externa) return { tipo: "externa", nivel: Math.round(Math.min(100, Math.max(0, n))) };
+  if (pino === PINOS.externa)
+    return {
+      tipo: "externa",
+      nivel: Math.round(Math.min(100, Math.max(0, n))),
+    };
   return null; // V25 é só leitura no Blynk
 }
 
 /**
  * enviar(pino, valor) → Promise (blynkUpdate) · executar(ação) → Promise · avisar(texto) opcional (log)
  */
-function criarPonte({ enviar, executar, avisar = () => {}, agora = () => Date.now() }) {
-  const publicado = {}, lido = {}, falhou = {};
+function criarPonte({
+  enviar,
+  executar,
+  avisar = () => {},
+  agora = () => Date.now(),
+}) {
+  const publicado = {},
+    lido = {},
+    falhou = {};
   const enviando = new Set();
 
   function publicar(state) {
@@ -69,9 +92,13 @@ function criarPonte({ enviar, executar, avisar = () => {}, agora = () => Date.no
       enviando.add(pino);
       Promise.resolve()
         .then(() => enviar(pino, v))
-        .then(() => { publicado[pino] = v; delete falhou[pino]; })
+        .then(() => {
+          publicado[pino] = v;
+          delete falhou[pino];
+        })
         .catch((err) => {
-          if (!(pino in falhou)) avisar(`${pino}: ${err.message} (o datastream existe no Console?)`);
+          if (!(pino in falhou))
+            avisar(`${pino}: ${err.message} (o datastream existe no Console?)`);
           falhou[pino] = agora();
         })
         .finally(() => enviando.delete(pino));
@@ -87,12 +114,15 @@ function criarPonte({ enviar, executar, avisar = () => {}, agora = () => Date.no
       const anterior = lido[pino];
       lido[pino] = v;
       // 1ª leitura só registra; e um valor igual ao publicado é o nosso próprio envio voltando
-      if (anterior === undefined || anterior === v || publicado[pino] === v) continue;
+      if (anterior === undefined || anterior === v || publicado[pino] === v)
+        continue;
       const a = acao(pino, v);
       if (!a) continue;
       publicado[pino] = v; // o Blynk já mostra esse valor: não precisa reenviar
       feitas.push(a);
-      Promise.resolve().then(() => executar(a)).catch((err) => avisar(`${pino}=${v}: ${err.message}`));
+      Promise.resolve()
+        .then(() => executar(a))
+        .catch((err) => avisar(`${pino}=${v}: ${err.message}`));
     }
     return feitas;
   }
@@ -107,23 +137,36 @@ function criarPonte({ enviar, executar, avisar = () => {}, agora = () => Date.no
  */
 function criarEventos({ enviar, avisar = () => {}, agora = () => Date.now() }) {
   const ultimo = {};
-  let dia = null, hoje = 0;
+  let dia = null,
+    hoje = 0;
 
   function mandar(codigo, texto) {
-    const t = agora(), d = new Date(t).toDateString();
-    if (d !== dia) { dia = d; hoje = 0; }
-    if (ultimo[codigo] !== undefined && t - ultimo[codigo] < REPETIR_MS) return false;
+    const t = agora(),
+      d = new Date(t).toDateString();
+    if (d !== dia) {
+      dia = d;
+      hoje = 0;
+    }
+    if (ultimo[codigo] !== undefined && t - ultimo[codigo] < REPETIR_MS)
+      return false;
     if (hoje >= LIMITE_DIA) return false;
     ultimo[codigo] = t;
     hoje++;
-    const desc = texto.length > MAX_TEXTO ? `${texto.slice(0, MAX_TEXTO - 1)}…` : texto;
-    Promise.resolve().then(() => enviar(codigo, desc))
-      .catch((err) => avisar(`evento ${codigo}: ${err.message} (o evento existe no Console, com notificação ligada?)`));
+    const desc =
+      texto.length > MAX_TEXTO ? `${texto.slice(0, MAX_TEXTO - 1)}…` : texto;
+    Promise.resolve()
+      .then(() => enviar(codigo, desc))
+      .catch((err) =>
+        avisar(
+          `evento ${codigo}: ${err.message} (o evento existe no Console, com notificação ligada?)`,
+        ),
+      );
     return true;
   }
 
   return {
-    alerta: (a) => (EVENTOS[a.id] ? mandar(EVENTOS[a.id], `${a.titulo}. ${a.texto}`) : false),
+    alerta: (a) =>
+      EVENTOS[a.id] ? mandar(EVENTOS[a.id], `${a.titulo}. ${a.texto}`) : false,
     resumo: (texto) => mandar(RESUMO, texto),
   };
 }
@@ -131,13 +174,27 @@ function criarEventos({ enviar, avisar = () => {}, agora = () => Date.now() }) {
 // ------------------------------------------------------------------
 // Terminal V13 (F3, parte do servidor): cada evento do histórico vira uma linha "20:14 luz ligada (painel)"
 // ------------------------------------------------------------------
-const ORIGEM = { painel: "painel", cena: "cena", automatico: "automático", dispositivo: "app/botão", sensor: "sensor",
-  sistema: "sistema", casa3d: "casa 3D", blynk: "Blynk", rotina: "rotina", conforto: "conforto" };
-const FILA_MAX = 50, PRESENCA_MS = 60000;
+const ORIGEM = {
+  painel: "painel",
+  cena: "cena",
+  automatico: "automático",
+  dispositivo: "app/botão",
+  sensor: "sensor",
+  sistema: "sistema",
+  casa3d: "casa 3D",
+  blynk: "Blynk",
+  rotina: "rotina",
+  conforto: "conforto",
+};
+const FILA_MAX = 50,
+  PRESENCA_MS = 60000;
 
 /** Linha do Terminal para um evento do histórico ({ ts, tipo, origem, detalhe }). */
 function linhaTerminal(e) {
-  const hora = new Date(e.ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  const hora = new Date(e.ts).toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
   return `${hora} ${e.tipo} ${e.detalhe} (${ORIGEM[e.origem] || e.origem})`;
 }
 
@@ -148,19 +205,38 @@ function linhaTerminal(e) {
  */
 // A placa (firmware 1.3.0) já escreve no V13 o que só ela conhece: regra automática de luz e janela e o alarme
 // (botão, comandos do Blynk, disparo). O servidor não repete essas linhas.
-const DA_PLACA = (e) => e.tipo === "alarme" || (e.origem === "automatico" && (e.tipo === "luz" || e.tipo === "janela"));
+const DA_PLACA = (e) =>
+  e.tipo === "alarme" ||
+  (e.origem === "automatico" && (e.tipo === "luz" || e.tipo === "janela"));
 
-function criarTerminal({ enviar, avisar = () => {}, agora = () => Date.now() }) {
+function criarTerminal({
+  enviar,
+  avisar = () => {},
+  agora = () => Date.now(),
+}) {
   const fila = [];
-  let rodando = false, falhouEm = null, ultimaPresenca = 0;
+  let rodando = false,
+    falhouEm = null,
+    ultimaPresenca = 0;
 
   async function esvaziar() {
     if (rodando) return;
     rodando = true;
     while (fila.length) {
-      if (falhouEm !== null && agora() - falhouEm < ESPERA_FALHA_MS) { fila.length = 0; break; }
-      try { await enviar(fila.shift()); falhouEm = null; }
-      catch (err) { if (falhouEm === null) avisar(`Terminal V13: ${err.message} (o datastream existe no Console?)`); falhouEm = agora(); }
+      if (falhouEm !== null && agora() - falhouEm < ESPERA_FALHA_MS) {
+        fila.length = 0;
+        break;
+      }
+      try {
+        await enviar(fila.shift());
+        falhouEm = null;
+      } catch (err) {
+        if (falhouEm === null)
+          avisar(
+            `Terminal V13: ${err.message} (o datastream existe no Console?)`,
+          );
+        falhouEm = agora();
+      }
     }
     rodando = false;
   }
@@ -180,4 +256,16 @@ function criarTerminal({ enviar, avisar = () => {}, agora = () => Date.now() }) 
   };
 }
 
-module.exports = { criarPonte, criarEventos, criarTerminal, linhaTerminal, saida, acao, PINOS, CENAS, ENTRADAS, EVENTOS, RESUMO };
+module.exports = {
+  criarPonte,
+  criarEventos,
+  criarTerminal,
+  linhaTerminal,
+  saida,
+  acao,
+  PINOS,
+  CENAS,
+  ENTRADAS,
+  EVENTOS,
+  RESUMO,
+};
