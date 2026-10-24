@@ -435,7 +435,85 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   const LW = 32, LD = 24;
   // grama e solo são lajes com o furo da piscina (Extrude com chanfro = bordas arredondadas como antes)
   const poolHole = [POOL.x - POOL.w / 2, POOL.x + POOL.w / 2, POOL.z - POOL.d / 2, POOL.z + POOL.d / 2];
-  slabWithHole(LW, 0.4, LD, poolHole, M.grass, 0, 0.18);
+  // V6: relevo. A laje de grama (topo reto) fica 1 cm abaixo de y = 0 e uma malha de relevo por cima sobe em colinas suaves
+  // (só para cima: 0 a ~75 cm). As zonas construídas ficam planas (retângulos x0, x1, z0, z1) e o relevo cresce
+  // devagar a partir delas; perto da borda da ilha volta a zero. Tudo que fica no chão lê `terrainH(x, z)`.
+  const PLANO = [
+    [-9.6, -6.9, 7.5, 10.3],   // espreguiçadeiras
+    [-7.2, 9.0, -4.4, 4.4],    // casa
+    [-7.3, 2.2, 3.6, 7.1],     // deck da sala e canteiros
+    [-7.2, 0.0, 7.0, 12.2],    // piscina
+    [1.9, 4.1, 3.6, 12.2],     // caminho até a porta
+    [6.0, 10.3, -4.2, 12.2],   // garagem
+    [0.3, 1.9, 7.1, 8.2],      // canteiro e pedras junto à piscina
+  ];
+  const suave = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const REL_MAX = 0.75, REL_MARGEM = 3.4;
+  function terrainH(x, z) {
+    let d = 1e9;
+    for (const [x0, x1, z0, z1] of PLANO) d = Math.min(d, Math.hypot(Math.max(x0 - x, 0, x - x1), Math.max(z0 - z, 0, z - z1)));
+    const borda = Math.min(LW / 2 - 0.2 - Math.abs(x), LD / 2 - 0.2 - Math.abs(z));
+    // três ondas de comprimentos diferentes (colinas largas e ondulação menor), normalizadas para 0–1
+    const n = (Math.sin(0.31 * x + 1.1) * Math.sin(0.27 * z + 0.4) + 0.6 * Math.sin(0.67 * x - 0.5 * z + 2.0) + 0.35 * Math.cos(1.1 * x + 0.9 * z)) / 1.95;
+    return Math.pow(n * 0.5 + 0.5, 1.5) * REL_MAX * suave(0, REL_MARGEM, d) * suave(0, 1.8, borda); // ^1,5: colinas mais definidas, planícies entre elas
+  }
+  // V6: chão fotográfico (Poly Haven forrest_ground_01, CC0: grama, terra e gravetos; a foto cobre 2 m). Sozinha ela se
+  // repetiria visivelmente pelo terreno todo, então o gramado procedural (4,6 m por repetição) multiplica a cor da foto
+  // em manchas grandes; o tom é puxado para um verde mais fundo. Perfil leve: só a cor.
+  const fotoSolo = TX.photoMaps('forrest_ground_01', { repeat: [LW / 2.0, LD / 2.0], leve: quality === 'low' });
+  const matSolo = std({ ...fotoSolo, color: 0xa6cf8a, roughness: 1 });
+  {
+    const macro = M.grass.map, rep = macro.repeat.clone(), rf = fotoSolo.map.repeat.clone();
+    matSolo.onBeforeCompile = (sh) => {
+      sh.uniforms.tMacro = { value: macro };
+      sh.uniforms.uMacroRep = { value: rep };
+      sh.uniforms.uFotoRep = { value: rf };
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform sampler2D tMacro; uniform vec2 uMacroRep; uniform vec2 uFotoRep;')
+        .replace('#include <map_fragment>', `#include <map_fragment>
+          #ifdef USE_MAP
+          vec3 macroCor = texture2D(tMacro, (vMapUv / uFotoRep) * uMacroRep).rgb;
+          diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * clamp(macroCor * 2.0, 0.4, 1.6), 0.8);
+          #endif`);
+    };
+  }
+  slabWithHole(LW, 0.4, LD, poolHole, matSolo, -0.012, 0.18);
+  {
+    // malha 0,2 × 0,2 m com o furo da piscina (alinhado à grade); UV igual ao do topo da laje (mesma textura do gramado)
+    const px0 = -LW / 2 + 0.2, pz0 = -LD / 2 + 0.2, passo = 0.2;
+    const nx = Math.round((LW - 0.4) / passo), nz = Math.round((LD - 0.4) / passo);
+    const pos = new Float32Array((nx + 1) * (nz + 1) * 3), uv = new Float32Array((nx + 1) * (nz + 1) * 2);
+    for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) {
+      const x = px0 + i * passo, z = pz0 + j * passo, k = j * (nx + 1) + i;
+      pos.set([x, terrainH(x, z), z], k * 3);
+      uv.set([x / LW + 0.5, 0.5 - z / LD], k * 2);
+    }
+    const idx = [];
+    for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+      const cx = px0 + (i + 0.5) * passo, cz = pz0 + (j + 0.5) * passo;
+      if (cx > poolHole[0] && cx < poolHole[1] && cz > poolHole[2] && cz < poolHole[3]) continue; // furo da piscina
+      const a = j * (nx + 1) + i, b = a + 1, c = a + nx + 1, d = c + 1;
+      idx.push(a, c, b, b, c, d);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    // terra aparecendo nas encostas mais inclinadas: cor por vértice (1 = sem alteração)
+    const cor = new Float32Array((nx + 1) * (nz + 1) * 3).fill(1);
+    for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) {
+      const x = px0 + i * passo, z = pz0 + j * passo;
+      const gx = (terrainH(x + 0.4, z) - terrainH(x - 0.4, z)) / 0.8, gz = (terrainH(x, z + 0.4) - terrainH(x, z - 0.4)) / 0.8;
+      const t = suave(0.1, 0.38, Math.hypot(gx, gz)) * 0.55;
+      cor.set([1 - 0.1 * t, 1 - 0.28 * t, 1 - 0.46 * t], (j * (nx + 1) + i) * 3);
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(cor, 3));
+    const matMalha = matSolo.clone();
+    matMalha.vertexColors = true;
+    matMalha.onBeforeCompile = matSolo.onBeforeCompile;
+    root.add(shadowed(new THREE.Mesh(g, matMalha), false, true));
+  }
   slabWithHole(LW - 0.35, 1.6, LD - 0.35, poolHole, M.soil, -0.4, 0.12);
   M.soil.map.repeat.set(5, 1);
   box(root, LW - 0.9, 2.2, LD - 0.9, M.rock, 0, -3.1, 0, { round: 0.3 });
@@ -1520,7 +1598,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647);
     const crown = new THREE.Group();
     crown.userData.dynamic = true;
-    crown.position.set(x, 0, z);
+    crown.position.set(x, terrainH(x, z), z);
     const incl = new THREE.Vector3((rnd() - 0.5) * 0.12, 1, (rnd() - 0.5) * 0.12).normalize();
     const { casca, cachos } = galhada([{ p: new THREE.Vector3(0, -0.05, 0), dir: incl, comp: 2.1 * s, raio: 0.2 * s }], {
       rnd, lider: true, comp: [2.1 * s, 1.35 * s, 0.85 * s, 0.55 * s], abre: [0.6, 0.45, 0.45], filhos: [[3, 5], [2, 3], [2, 3]],
@@ -1552,8 +1630,8 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   // V2: spot de chão em cada árvore — luminária no pé e círculo de luz (o halo da copa saiu: com a copa de galhos
   // ele ficava em volta do tronco)
   {
-    for (const [x, z] of ARVORES) cyl(root, 0.07, 0.08, 0.06, M.uplight, x + 0.45, 0.03, z + 0.45, 12);
-    glowBatch(poolTex, 0xffc27a, ARVORES.map(([x, z, s]) => ({ w: 1.8 * s, h: 1.8 * s, x: x + 0.2, y: 0.015, z: z + 0.2, chao: true })), 0.45);
+    for (const [x, z] of ARVORES) cyl(root, 0.07, 0.08, 0.06, M.uplight, x + 0.45, 0.03 + terrainH(x + 0.45, z + 0.45), z + 0.45, 12);
+    glowBatch(poolTex, 0xffc27a, ARVORES.map(([x, z, s]) => ({ w: 1.8 * s, h: 1.8 * s, x: x + 0.2, y: 0.015 + terrainH(x + 0.2, z + 0.2), z: z + 0.2, chao: true })), 0.45);
   }
 
   // sebes e arbustos: arbustos de verdade (hastes + folhas), uma malha de casca e um InstancedMesh para todos
@@ -1561,10 +1639,10 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     const spots = [];
     for (let x = -14; x <= 14; x += 0.9) spots.push([x, -10.9, 0.62 + Math.sin(x * 1.3) * 0.12]);
     for (let z = -9; z <= 7; z += 0.95) spots.push([-14.8, z, 0.6 + Math.cos(z) * 0.1]);
-    for (const [x, z] of [[-7.3, 4.4], [-7.3, 6.8], [5.85, 4.3], [1.1, 7.75], [10.8, 3.6], [10.9, -1.2], [10.8, -3.4], [-7.2, -2.0], [-7.0, 0.5]]) spots.push([x, z, 0.5 + Math.abs((x * z) % 0.25)]);
+    for (const [x, z] of [[-7.3, 4.4], [-7.3, 6.8], [5.15, 5.0], [1.1, 7.75], [10.8, 3.6], [10.9, -1.2], [10.8, -3.4], [-7.6, -2.0], [-7.5, 0.5]]) spots.push([x, z, 0.5 + Math.abs((x * z) % 0.25)]);
     let sd = 4242;
     const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647);
-    const todos = spots.map(([x, z, S]) => arbusto(x, 0, z, S * 1.5, rnd));
+    const todos = spots.map(([x, z, S]) => arbusto(x, terrainH(x, z), z, S * 1.5, rnd));
     root.add(shadowed(new THREE.Mesh(mergeGeometries(todos.flatMap((a) => a.casca)), M.bark), false, true));
     const por = Math.max(5, Math.round(14 * densidade));
     const total = todos.reduce((n, a) => n + a.cachos.length * por, 0);
@@ -1675,7 +1753,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     pts.forEach(([x, z], i) => {
       const s = 0.7 + r() * 0.6;
       q.setFromEuler(e.set((r() - 0.5) * 0.2, r() * 6, (r() - 0.5) * 0.2));
-      inst.setMatrixAt(i, new THREE.Matrix4().compose(new THREE.Vector3(x, 0, z), q, new THREE.Vector3(s, s * (0.8 + r() * 0.5), s)));
+      inst.setMatrixAt(i, new THREE.Matrix4().compose(new THREE.Vector3(x, terrainH(x, z), z), q, new THREE.Vector3(s, s * (0.8 + r() * 0.5), s)));
       const k = 0.8 + r() * 0.3, seca = r() < 0.12 ? 0.12 : 0; // algumas touceiras mais secas, como as manchas do chão
       inst.setColorAt(i, c.setRGB(k + seca, k + seca * 0.4, k * 0.9));
     });
@@ -1684,7 +1762,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   // pedras decorativas
   for (const [x, z, s] of [[-0.2, 7.3, 0.35], [0.2, 7.6, 0.22], [-7.3, 10.8, 0.4], [-6.9, 11.2, 0.25], [10.9, 11.0, 0.3]]) {
     const r = shadowed(new THREE.Mesh(new THREE.DodecahedronGeometry(s, 1), M.stone));
-    r.position.set(x, s * 0.45, z);
+    r.position.set(x, s * 0.45 + terrainH(x, z), z);
     r.scale.y = 0.6;
     root.add(r);
   }
