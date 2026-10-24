@@ -60,6 +60,8 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     soil: std({ map: TX.soil(), roughness: 1 }),
     rock: std({ map: TX.rock(), roughness: 0.95 }),
     stone: std({ map: tex(TX.stone, [1, 1]), roughness: 0.82 }),
+    // lajotas de concreto fotográficas (Poly Haven concrete_tiles_02, CC0): caminho até a porta e o patamar da entrada
+    pathTile: std({ ...TX.photoMaps('concrete_tiles_02', { repeat: [1 / 1.825, 1 / 1.825], leve: quality === 'low' }), roughness: 1 }),
     tile: std({ map: TX.poolTile(), roughness: 0.25 }),
     fabric: new THREE.MeshPhysicalMaterial({ color: 0xd3cbbd, roughness: 1, sheen: 1, sheenRoughness: 0.8, sheenColor: 0xffffff }),
     fabricGreen: new THREE.MeshPhysicalMaterial({ color: 0x4f6b58, roughness: 1, sheen: 1, sheenRoughness: 0.7, sheenColor: 0xbfd6c5 }),
@@ -431,6 +433,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
 
   // Garagem: vaga de 3,6 m entre a parede leste (x = 6,3) e os pilares; marquise da laje até GAR_X1; carro no meio
   const GAR_X1 = 9.9, CARRO_X = 8.0;
+  const PISO_TOPO = 0.012; // topo do piso da garagem e das pedras do caminho: quase rente à grama (y = 0)
   // ================================================================
   // Casa — térreo
   // ================================================================
@@ -447,7 +450,11 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   box(jamb, 0.07, doorO.h, T + 0.05, M.frame, doorO.u + 0.035, doorO.h / 2, T / 2);
   box(jamb, 0.07, doorO.h, T + 0.05, M.frame, doorO.u + doorO.w - 0.035, doorO.h / 2, T / 2);
   box(jamb, doorO.w, 0.07, T + 0.05, M.frame, doorO.u + doorO.w / 2, doorO.h - 0.035, T / 2);
-  box(jamb, doorO.w + 0.5, 0.04, 0.9, M.stone, doorO.u + doorO.w / 2, -0.13, T + 0.45); // soleira/degrau
+  // degrau da entrada: o embasamento da casa vai até z = 3,8 (topo no piso, y = FL); daí até z = 4,125, onde começa o
+  // caminho (topo a 2,5 cm), fica um degrau de 9 cm da mesma lajota do caminho, encostado na 1ª lajota e no embasamento.
+  // Coordenadas locais da parede: z = mundo − 3,375 · y = mundo − FL
+  // mesma largura (1,5 m) e mesma escala de textura do caminho, para ler como a primeira lajota, só mais alta
+  tiledBox(jamb, 1.5, 0.1, 0.325, M.pathTile, doorO.u + doorO.w / 2, -0.11, T + 0.3375);
   // fundo do vão fica no mesmo plano do topo da base (y = FL) e piscava: placa de pedra 1,2 cm acima cobre os dois
   box(jamb, doorO.w - 0.14, 0.012, T + 0.05, M.stone, doorO.u + doorO.w / 2, 0.006, T / 2, { cast: false });
 
@@ -1096,16 +1103,25 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     for (const dz of [-0.55, 0.55]) lounger(root, lx, 0, POOL.z + dz, Math.PI / 2);
   }
   // caminho de pedras até a porta + calçada da garagem
-  for (let i = 0; i < 9; i++) box(root, 1.5, 0.06, 0.55, M.stone, 3.0, 0.03, 4.4 + i * 0.85, { round: 0.02 });
+  // assentadas rente à grama (topo a 2,5 cm); a primeira começa onde termina o patamar da porta (z = 4,125)
+  for (let i = 0; i < 9; i++) tiledBox(root, 1.5, 0.06, 0.55, M.pathTile, 3.0, 0.025 - 0.03, 4.4 + i * 0.85);
   // piso da garagem e calçada numa laje só (antes eram duas caixas com textura esticada diferente e um degrau),
   // com a textura em metros e juntas de dilatação a cada 2,5 m
   {
     const x0 = 6.3, x1 = GAR_X1, z0 = -3.8, z1 = 11.75;
-    const piso = M.concrete.clone();
-    piso.map = M.concrete.map.clone(); piso.map.repeat.set(0.4, 0.4); piso.map.needsUpdate = true;
-    tiledBox(root, x1 - x0, 0.06, z1 - z0, piso, (x0 + x1) / 2, 0.03, (z0 + z1) / 2);
-    const junta = std({ color: 0x5f5d59, roughness: 0.95 });
-    for (let z = z0 + 2.5; z < z1 - 0.5; z += 2.5) box(root, x1 - x0 - 0.02, 0.004, 0.025, junta, (x0 + x1) / 2, 0.061, z, { cast: false });
+    // bloco de concreto fotográfico (Poly Haven concrete_pavement, CC0): a textura cobre 1,8 m e já traz as juntas
+    // concreto liso fotográfico (Poly Haven concrete_floor_worn_001, CC0): a foto cobre 3 m
+    const piso = std({ ...TX.photoMaps('concrete_floor_worn_001', { repeat: [1 / 3, 1 / 3], leve: quality === 'low' }), roughness: 1 });
+    // embutido: o topo fica 1 cm acima da grama (antes era uma placa de 6 cm por cima do terreno)
+    tiledBox(root, x1 - x0, 0.06, z1 - z0, piso, (x0 + x1) / 2, PISO_TOPO - 0.03, (z0 + z1) / 2);
+    // meio-fio fino de concreto nas bordas que dão para o jardim: leste, oeste (depois da casa) e fundos;
+    // a frente (z = 11,75) é a saída para a rua e fica sem
+    const fio = std({ color: 0xa9a7a1, roughness: 0.9 });
+    const fw = 0.12, fh = 0.03;
+    box(root, fw, fh, z1 - z0 + fw, fio, x1 + fw / 2, PISO_TOPO - 0.03 + fh / 2 + 0.015, (z0 + z1) / 2 - fw / 2, { cast: false });
+    box(root, x1 - x0 + fw, fh, fw, fio, (x0 + x1) / 2 + fw / 2, PISO_TOPO - 0.03 + fh / 2 + 0.015, z0 - fw / 2, { cast: false });
+    // lado oeste (jardim e caminho): da fachada sul da casa (z = 3,8) até o fim da laje
+    box(root, fw, fh, z1 - 3.8, fio, x0 - fw / 2, PISO_TOPO - 0.03 + fh / 2 + 0.015, (3.8 + z1) / 2, { cast: false });
   }
   // balizadores (luz de jardim)
   const bollards = [];
@@ -1152,7 +1168,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   let evCablePlug = null, evCableHolster = null;
   const carGerado = new THREE.Group(); // carro gerado em código (some se houver modelos/carro.glb)
   {
-    car.position.set(CARRO_X, 0.05, 7.4);   // no meio da vaga (parede x = 6,3, pilares x = GAR_X1 − 0,2)
+    car.position.set(CARRO_X, PISO_TOPO - 0.01, 7.4);   // no meio da vaga (parede x = 6,3, pilares x = GAR_X1 − 0,2)
     car.scale.setScalar(0.88);
     car.rotation.y = Math.PI; // frente (faróis, +z local) virada para o fundo da garagem
     // Carro elétrico moderno (sedã fastback). Frente = +z local, comprimento ±2,27, largura 1,8.
@@ -1464,7 +1480,9 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
       return g;
     };
     const px = CARRO_X - 0.865 * 0.88; // porta de carga do carro na vaga
-    evCablePlug = tubo([[x0 + 0.06, yc - 0.22, zc], [x0 + 0.1, 0.45, zc - 0.05], [x0 + 0.16, 0.08, 2.05], [(x0 + px) / 2, 0.08, 1.92], [px - 0.06, 0.2, 1.84], [px - 0.01, 0.52, 1.81]]);
+    // o embasamento da casa vai até x = 6,3 com topo em FL (15 cm): o cabo se afasta da parede ainda no alto e só
+    // desce no piso da garagem, longe do embasamento (topo do piso a 1,2 cm; o tubo tem 1,7 cm de raio)
+    evCablePlug = tubo([[x0 + 0.06, yc - 0.22, zc], [x0 + 0.2, yc - 0.55, zc - 0.04], [6.5, 0.32, 2.12], [6.58, 0.032, 2.04], [(6.58 + px) / 2, 0.032, 1.94], [px - 0.06, 0.2, 1.84], [px - 0.01, 0.52, 1.81]]);
     evCableHolster = tubo([[x0 + 0.06, yc - 0.22, zc], [x0 + 0.08, 0.55, zc + 0.05], [x0 + 0.09, 0.38, zc + 0.2], [x0 + 0.06, yc - 0.33, zc + 0.24]]);
   }
 
@@ -1624,7 +1642,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     root.add(inst);
   }
   // pedras decorativas
-  for (const [x, z, s] of [[-0.2, 7.3, 0.35], [0.2, 7.6, 0.22], [-7.3, 10.8, 0.4], [-6.9, 11.2, 0.25], [9.8, 11.2, 0.3]]) {
+  for (const [x, z, s] of [[-0.2, 7.3, 0.35], [0.2, 7.6, 0.22], [-7.3, 10.8, 0.4], [-6.9, 11.2, 0.25], [10.9, 11.0, 0.3]]) {
     const r = shadowed(new THREE.Mesh(new THREE.DodecahedronGeometry(s, 1), M.stone));
     r.position.set(x, s * 0.45, z);
     r.scale.y = 0.6;

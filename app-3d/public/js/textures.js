@@ -87,6 +87,22 @@ export function darkPlaster() {
   return toTexture(paintField(512, f, '#2d3034', '#3b3f44', 5, 4), { repeat: [2, 2] });
 }
 
+// Texturas fotográficas (Poly Haven, CC0 — public/texturas/CREDITOS.md): cor, normal e rugosidade de 1K em JPG.
+// Carregam em segundo plano (o material aparece com a cor base até chegarem). `leve` = só a cor (perfil de qualidade baixa).
+export function photoMaps(nome, { repeat = [1, 1], leve = false } = {}) {
+  const loader = new THREE.TextureLoader();
+  const carregar = (sufixo, cor) => {
+    const t = loader.load(`/texturas/${nome}_${sufixo}_1k.jpg`);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(repeat[0], repeat[1]);
+    t.anisotropy = 8;
+    if (cor) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  return leve ? { map: carregar('diff', true) }
+    : { map: carregar('diff', true), normalMap: carregar('nor_gl', false), roughnessMap: carregar('rough', false) };
+}
+
 export function concrete() {
   const f = fbm(512, 6, 6, 21, 0.55);
   const c = paintField(512, f, '#8e8c87', '#b3b0aa', 14, 5);
