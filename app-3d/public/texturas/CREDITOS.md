@@ -8,3 +8,6 @@ Carregadas por `TX.photoMaps()` em `app-3d/public/js/textures.js` e aplicadas em
 |---|---|---|---|
 | `concrete_floor_worn_001_*` | [Concrete Floor Worn 001](https://polyhaven.com/a/concrete_floor_worn_001) | Dimitrios Savva (fotografia), Rico Cilliers (processamento) | piso da garagem |
 | `concrete_tiles_02_*` | [Concrete Tiles 02](https://polyhaven.com/a/concrete_tiles_02) | Charlotte Baglioni | caminho até a porta |
+| `oak_wood_planks_*` | [Oak Wood Planks](https://polyhaven.com/a/oak_wood_planks) | Dimitrios Savva | piso interno (térreo e andar de cima) |
+| `teak_veneer_*` | [Teak Veneer](https://polyhaven.com/a/teak_veneer) | Jenelle van Heerden | deck da piscina e deck do terraço |
+| `japanese_cedar_planks_*` | [Japanese Cedar Planks](https://polyhaven.com/a/japanese_cedar_planks) | Charlotte Baglioni (escaneamento), Rico Cilliers (processamento) | ripas verticais da fachada |

@@ -89,12 +89,13 @@ export function darkPlaster() {
 
 // Texturas fotográficas (Poly Haven, CC0 — public/texturas/CREDITOS.md): cor, normal e rugosidade de 1K em JPG.
 // Carregam em segundo plano (o material aparece com a cor base até chegarem). `leve` = só a cor (perfil de qualidade baixa).
-export function photoMaps(nome, { repeat = [1, 1], leve = false } = {}) {
+export function photoMaps(nome, { repeat = [1, 1], leve = false, rotacao = 0 } = {}) {
   const loader = new THREE.TextureLoader();
   const carregar = (sufixo, cor) => {
     const t = loader.load(`/texturas/${nome}_${sufixo}_1k.jpg`);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.repeat.set(repeat[0], repeat[1]);
+    if (rotacao) { t.center.set(0.5, 0.5); t.rotation = rotacao; }
     t.anisotropy = 8;
     if (cor) t.colorSpace = THREE.SRGBColorSpace;
     return t;

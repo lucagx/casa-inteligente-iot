@@ -47,10 +47,12 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     slab: std({ map: tex(TX.plaster, [0.25, 0.25]), color: 0xf4f2ee, roughness: 0.85 }),
     darkPlaster: std({ map: tex(TX.darkPlaster, [0.3, 0.3]), roughness: 0.9 }),
     concrete: std({ map: tex(TX.concrete, [0.25, 0.25]), roughness: 0.88 }),
-    woodFloor: std({ map: tex(TX.woodFloor, [0.45, 0.45]), roughness: 0.5 }),
-    terraceDeck: std({ map: tex(() => TX.woodFloor('#8d6040'), [0.5, 0.5]), roughness: 0.7 }),
-    deck: std({ map: tex(() => TX.woodBoard('#98693f', false, 72), [4, 1]), roughness: 0.72 }),
-    cladding: std({ map: tex(() => TX.woodBoard('#a9693a', true, 73), [1, 1]), roughness: 0.62 }),
+    // V5: madeiras fotográficas (Poly Haven, CC0): carvalho no piso interno, teca nos decks, cedro nas ripas da fachada.
+    // O UV é em metros (tiledBox / boxMetros), então a repetição é 1 / tamanho real da foto
+    woodFloor: std({ ...TX.photoMaps('oak_wood_planks', { repeat: [1 / 1.2, 1 / 1.2], leve: quality === 'low' }), roughness: 1 }),
+    terraceDeck: std({ ...TX.photoMaps('teak_veneer', { repeat: [1, 1], leve: quality === 'low', rotacao: Math.PI / 2 }), roughness: 1 }),
+    deck: std({ ...TX.photoMaps('teak_veneer', { repeat: [1, 1], leve: quality === 'low' }), roughness: 1, vertexColors: true }),
+    cladding: std({ ...TX.photoMaps('japanese_cedar_planks', { repeat: [1 / 1.13, 1 / 1.13], leve: quality === 'low' }), roughness: 1 }),
     walnut: std({ map: tex(() => TX.woodBoard('#5c3a22', true, 74), [1, 1]), roughness: 0.45 }),
     oak: std({ map: tex(() => TX.woodBoard('#c49a6c', false, 75), [1, 1]), roughness: 0.5 }),
     frame: std({ color: 0x1f2328, metalness: 0.75, roughness: 0.35 }),
@@ -156,6 +158,14 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     const m = shadowed(new THREE.Mesh(g, mat), false, true);
     root.add(m);
     return m;
+  }
+  // geometria de caixa com UV em metros e deslocamento (du, dv): peças finas repetidas (tábuas, ripas) pegam trechos
+  // diferentes da foto em vez de saírem todas iguais
+  function boxMetros(w, h, d, du = 0, dv = 0) {
+    const g = new THREE.BoxGeometry(w, h, d), uv = g.attributes.uv;
+    const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]]; // +x, -x, +y, -y, +z, -z
+    for (let f = 0; f < 6; f++) for (let k = 0; k < 4; k++) { const i = f * 4 + k; uv.setXY(i, uv.getX(i) * dims[f][0] + du, uv.getY(i) * dims[f][1] + dv); }
+    return g;
   }
   // caixa com UV em metros (azulejo do mesmo tamanho em qualquer face; o material usa repeat 1)
   function tiledBox(parent, w, h, d, mat, x, y, z) {
@@ -438,7 +448,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   // Casa — térreo
   // ================================================================
   box(root, 12.6, FL, 7.6, M.concrete, 0, FL / 2, 0);                 // base
-  box(root, 11.75, 0.01, 6.75, M.woodFloor, 0, FL + 0.005, 0, { cast: false }); // piso de madeira
+  tiledBox(root, 11.75, 0.01, 6.75, M.woodFloor, 0, FL + 0.005, 0).castShadow = false; // piso de madeira
 
   // Fachada sul: parede sólida com porta e janela lateral estreita
   const doorO = { u: 0.9, v: 0, w: 1.2, h: 2.7 };
@@ -539,8 +549,8 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   // ================================================================
   // Casa — pavimento superior (em balanço sobre a garagem)
   // ================================================================
-  box(root, 11.0, 0.01, 2.5 - ST_Z1, M.woodFloor, 2.5, UFL + 0.005, (2.5 + ST_Z1) / 2, { cast: false });
-  box(root, 8.0 - ST_X1, 0.01, ST_Z1 + 3.5, M.woodFloor, (8.0 + ST_X1) / 2, UFL + 0.005, (ST_Z1 - 3.5) / 2, { cast: false });
+  tiledBox(root, 11.0, 0.01, 2.5 - ST_Z1, M.woodFloor, 2.5, UFL + 0.005, (2.5 + ST_Z1) / 2).castShadow = false;
+  tiledBox(root, 8.0 - ST_X1, 0.01, ST_Z1 + 3.5, M.woodFloor, (8.0 + ST_X1) / 2, UFL + 0.005, (ST_Z1 - 3.5) / 2).castShadow = false;
   const ribbonO = { u: 1.0, v: 0.8, w: 6.5, h: 1.5 };
   const ufSouth = placeWall(wall(11, UH, [ribbonO], M.darkPlaster), '+x', -3.0, 2.5, UFL);
   frameOpening(ufSouth, ribbonO, { mullions: 3, glass: false });
@@ -572,7 +582,6 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
 
   // Brises verticais de madeira (profundidade real, projetam sombra)
   {
-    const slatGeo = new THREE.BoxGeometry(0.05, UH - 0.1, 0.09);
     const list = [];
     for (let x = 4.95; x <= 7.95; x += 0.11) list.push([x, UFL + UH / 2, 2.5 + T / 2 + 0.06, 0]);
     for (let z = 2.45; z >= -3.45; z -= 0.11) {
@@ -580,14 +589,14 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
       if (u > bedO.u - 0.02 && u < bedO.u + bedO.w + 0.02) continue;
       list.push([8.0 + T / 2 + 0.06, UFL + UH / 2, z, Math.PI / 2]);
     }
-    const inst = shadowed(new THREE.InstancedMesh(slatGeo, M.cladding, list.length));
+    // uma malha só (≈ 80 ripas): cada uma com deslocamento de UV próprio, senão todas mostrariam a mesma faixa da foto
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
-    list.forEach(([x, y, z, ry], i) => {
-      q.setFromEuler(e.set(0, ry, 0));
-      m4.compose(new THREE.Vector3(x, y, z), q, new THREE.Vector3(1, 1, 1));
-      inst.setMatrixAt(i, m4);
+    const geos = list.map(([x, y, z, ry], i) => {
+      const g = boxMetros(0.05, UH - 0.1, 0.09, (i * 0.6180339 % 1) * 1.13, (i * 0.3819 % 1) * 1.13);
+      g.applyMatrix4(m4.compose(new THREE.Vector3(x, y, z), q.setFromEuler(e.set(0, ry, 0)), new THREE.Vector3(1, 1, 1)));
+      return g;
     });
-    root.add(inst);
+    root.add(shadowed(new THREE.Mesh(mergeGeometries(geos), M.cladding)));
     // travessas de fixação
     for (const y of [UFL + 0.25, ROOF0 - 0.25]) {
       box(root, 3.1, 0.04, 0.03, M.frame, 6.45, y, 2.5 + T / 2 + 0.01);
@@ -629,7 +638,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   }
 
   // Terraço sobre o térreo (lado oeste) com guarda-corpo de vidro
-  box(root, 2.95, 0.03, 7.3, M.terraceDeck, -4.55, UFL + 0.015, 0, { cast: false });
+  tiledBox(root, 2.95, 0.03, 7.3, M.terraceDeck, -4.55, UFL + 0.015, 0).castShadow = false; // veio no sentido do comprimento (textura girada 90°)
   {
     const railH = 1.05;
     // laterais vão até a face externa da parede oeste do andar de cima e retornam até ela:
@@ -1023,14 +1032,16 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   // deck de madeira (tábuas reais com frestas)
   {
     box(root, 8.4, 0.07, 2.9, M.black, -2.4, 0.035, 5.35, { cast: false });
-    const n = 18, geo = new THREE.BoxGeometry(8.4, 0.05, 0.145);
-    const inst = shadowed(new THREE.InstancedMesh(geo, M.deck, n));
-    const c = new THREE.Color();
+    // 18 tábuas numa malha só: cada uma com um trecho diferente da foto e um tom levemente diferente (cor por vértice)
+    const n = 18, tabuas = [];
     for (let i = 0; i < n; i++) {
-      inst.setMatrixAt(i, new THREE.Matrix4().makeTranslation(-2.4, 0.095, 3.97 + i * 0.16));
-      inst.setColorAt(i, c.setHSL(0.07, 0.25, 0.75 + (i * 37 % 10) / 50));
+      const g = boxMetros(8.4, 0.05, 0.145, (i * 0.6180339 % 1) * 3.7, (i * 0.7549 % 1));
+      g.translate(-2.4, 0.095, 3.97 + i * 0.16);
+      const k = 0.82 + (i * 37 % 10) / 55, cor = new Float32Array(g.attributes.position.count * 3).fill(k);
+      g.setAttribute('color', new THREE.BufferAttribute(cor, 3));
+      tabuas.push(g);
     }
-    root.add(inst);
+    root.add(shadowed(new THREE.Mesh(mergeGeometries(tabuas), M.deck)));
   }
   // deck da sala: conjunto de estar baixo na ponta oeste e vasos nas pontas — o centro fica livre
   // para a vista da sala (nada passa de ~0,8 m de altura)
