@@ -785,7 +785,9 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     return { casca, cachos };
   }
   /** Raminhos de folha em volta dos cachos → matrizes/cores num InstancedMesh (a partir de `k0`). */
-  function folhas(inst, k0, cachos, por, tam, rnd, aperto = 0.85, tom = 1) {
+  // V7: `tinta` [r, g, b] muda o tom da planta inteira; `mancha` (0–1) varia o tom em manchas dentro da copa
+  function folhas(inst, k0, cachos, por, tam, rnd, aperto = 0.85, tom = 1, tinta = [1, 1, 1], mancha = 0) {
+    const fase = (cachos[0][0].x * 7.1 + cachos[0][0].z * 3.3) % 6.28; // sem sortear: não muda o resto do mundo
     const centro = cachos.reduce((a, [p]) => a.add(p), new THREE.Vector3()).multiplyScalar(1 / cachos.length);
     const yMin = Math.min(...cachos.map(([p]) => p.y)), yMax = Math.max(...cachos.map(([p]) => p.y));
     const raioMax = Math.max(0.01, ...cachos.map(([p]) => p.distanceTo(centro)));
@@ -803,8 +805,10 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
         const sz = tam * (0.75 + rnd() * 0.5);
         inst.setMatrixAt(k, m4.compose(pos, q, sc.set(sz, sz, sz)));
         const alt = (pos.y - yMin) / Math.max(0.01, yMax - yMin), borda = Math.min(1, pos.distanceTo(centro) / raioMax);
-        const luz = (0.42 + alt * 0.26 + borda * 0.28) * tom;
-        inst.setColorAt(k, c.setRGB(luz * (0.92 + rnd() * 0.14), luz * (0.95 + rnd() * 0.1), luz * (0.85 + rnd() * 0.15)));
+        // manchas: faixas suaves de ruído no espaço (nunca perto de zero: 1 ± mancha/2)
+        const nz = Math.sin(pos.x * 2.3 + fase) * Math.cos(pos.z * 1.9 - fase * 1.3) * 0.5 + Math.sin(pos.y * 3.1 + pos.x * 1.1 + fase) * 0.5;
+        const luz = (0.42 + alt * 0.26 + borda * 0.28) * tom * (1 + nz * mancha * 0.5);
+        inst.setColorAt(k, c.setRGB(luz * tinta[0] * (0.92 + rnd() * 0.14), luz * tinta[1] * (0.95 + rnd() * 0.1), luz * tinta[2] * (0.85 + rnd() * 0.15)));
         k++;
       }
     }
@@ -1488,7 +1492,19 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
 
   // árvores: tronco com líder, 3–5 galhos principais, 2 divisões; a árvore inteira balança em torno do pé
   const trees = [];
+  // V7: cada árvore tem o seu jeito — tom (tinta), tamanho da folha, quantidade de enchimento, desenho da folha e manchas
+  const ARV_VAR = [
+    { tinta: [1, 1, 1], folha: 1, enche: 1, mat: 0, mancha: 0.5 },
+    { tinta: [1.12, 1.04, 0.78], folha: 0.9, enche: 1.1, mat: 2, mancha: 0.7 },   // verde-amarelada, folha miúda
+    { tinta: [0.86, 0.97, 0.92], folha: 1.2, enche: 0.9, mat: 1, mancha: 0.4 },   // mais escura, folha grande
+    { tinta: [1.05, 1.0, 0.85], folha: 1, enche: 1.2, mat: 0, mancha: 0.6 },
+    { tinta: [0.92, 1.06, 0.95], folha: 1.1, enche: 1, mat: 2, mancha: 0.5 },
+    { tinta: [1.1, 1.02, 0.82], folha: 0.95, enche: 1.15, mat: 1, mancha: 0.8 },
+    { tinta: [0.88, 1.0, 0.9], folha: 1.15, enche: 0.95, mat: 0, mancha: 0.45 },
+    { tinta: [1.0, 1.08, 0.88], folha: 1.0, enche: 1.1, mat: 2, mancha: 0.6 },
+  ];
   function tree(x, z, s = 1, seed = 1) {
+    const v = ARV_VAR[(seed - 1) % ARV_VAR.length];
     let sd = seed * 7919 + 13;
     const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647);
     const crown = new THREE.Group();
@@ -1500,9 +1516,22 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
       cacho: [0, 0, 0.8 * s, 0.62 * s], sobe: 0.22, seg: [12, 8, 5, 4], forquilha: 0.82,
     });
     crown.add(shadowed(new THREE.Mesh(mergeGeometries(casca), M.bark)));
+    // V7: enchimento do miolo. Os cachos acima ficam só nas pontas dos galhos (a copa vira uma casca oca, vista de cima
+    // aparecem buracos); aqui entram cachos dentro de uma elipse que cobre a copa, mais densos no topo
+    {
+      const min = new THREE.Vector3(1e9, 1e9, 1e9), max = new THREE.Vector3(-1e9, -1e9, -1e9);
+      for (const [p] of cachos) { min.min(p); max.max(p); }
+      const c0 = min.clone().add(max).multiplyScalar(0.5), rx = (max.x - min.x) / 2, ry = (max.y - min.y) / 2, rz = (max.z - min.z) / 2;
+      const extra = Math.round(cachos.length * 0.9 * v.enche);
+      for (let i = 0; i < extra; i++) {
+        const d = new THREE.Vector3(rnd() * 2 - 1, rnd() * 2 - 0.55, rnd() * 2 - 1);
+        if (d.length() > 1) { i--; continue; }
+        cachos.push([new THREE.Vector3(c0.x + d.x * rx * 0.92, c0.y + d.y * ry * 0.95, c0.z + d.z * rz * 0.92), (0.55 + rnd() * 0.25) * s]);
+      }
+    }
     const por = Math.max(14, Math.round(46 * densidade));
-    const inst = shadowed(new THREE.InstancedMesh(cardGeo, sprigMats[seed % 2], cachos.length * por), true, true);
-    folhas(inst, 0, cachos, por, 0.58 * s, rnd);
+    const inst = shadowed(new THREE.InstancedMesh(cardGeo, sprigMats[v.mat], cachos.length * por), true, true);
+    folhas(inst, 0, cachos, por, 0.58 * s * v.folha, rnd, 0.85, 1, v.tinta, v.mancha);
     crown.add(inst);
     root.add(crown);
     trees.push({ crown, phase: seed * 1.7 });
