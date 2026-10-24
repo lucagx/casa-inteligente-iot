@@ -109,7 +109,111 @@ por cômodo, consumo do mês por cômodo e a simulação da **tarifa branca** (p
 - Potências de uma casa real equivalente (o protoboard gasta miliwatts): `CONSUMO_W`, `TARIFA_KWH`,
   `TARIFA_BRANCA`, `META_MENSAL_KWH` (ver `.env.example`).
 - `CONSUMO_V15=1` publica o consumo do dia no V15 do Blynk a cada 5 min — ligar depois de criar o datastream (K1).
-- O carregador do carro (V3, M4) entra aqui quando existir.
+- O carregador do carro (V3) entra no total, nos 7 dias, por cômodo e na tarifa branca; a dica avisa quando o carro
+  carregou entre 17h e 22h em dia útil e quanto custaria com "Só fora de ponta".
+
+### Carro elétrico e carregador (V3)
+
+O HC-SR04 saiu do protoboard, então o carro virou parte do IoB de consumo: um **carregador virtual** (não existe
+na placa nem no Blynk ainda) que vive no servidor (`server/carregador.js`, `state.carro`), como as luzes por cômodo.
+
+- Só carrega com o carro na garagem. A bateria sobe com a energia que entra: `CARREGADOR_KW` (padrão 2,2 kW,
+  carregador portátil) ÷ `BATERIA_KWH` (padrão 40 kWh) ≈ 5,5 % por hora; para sozinho em 100 %.
+- **Só fora de ponta:** com o carregador ligado, espera as 22h nos dias úteis (o fim de semana inteiro é fora de ponta).
+- Cenas: **Cheguei** começa com o carro entrando na garagem (o cabo conecta); **Saí** termina com o carro saindo
+  (a carga para). Ao voltar, a bateria está mais baixa (3 % + 1 % por hora fora, no máximo 25 %).
+- Histórico: **V24** carregando (0/1), **V25** bateria (%), **V26** carro na garagem; eventos `carregador`
+  (carregando, parado, aguardando fora de ponta) e `carro` (chegou, saiu). Ao reiniciar, o estado volta do histórico.
+- Casa 3D: wallbox na parede leste da garagem com tela da bateria e LED (azul conectado, âmbar aguardando,
+  verde pulsando carregando), cabo até a porta de carga do carro e hotspot. Painel do celular: bloco "Carro elétrico".
+- API: `POST /api/carregador {"ligado":true}` ou `{"foraDePonta":true}` (opcional `"origem":"painel"|"casa3d"`).
+- **Modelo 3D do carro:** qualquer glTF binário em `public/modelos/*.glb` substitui o carro gerado em código (o servidor
+  lista a pasta em `/js/config.js`, `MODELOS`). `CARRO_MODELO` no `.env` escolhe qual (nome sem `.glb`); sem ela, vale
+  `carro.glb` ou o primeiro em ordem alfabética; `?carro=2024_byd_seal` troca na hora e `?carroGiro=180` vira a frente.
+  Ajustes automáticos: comprimento de ~4 m na cena, centralizado, rodas no chão; vidros com *transmission* (renderizam a
+  cena 2×) viram vidro preto translúcido nas janelas e lente clara nos faróis/lanternas; peças de roda com as 4 rodas numa
+  malha só (pneu, aro, disco) são divididas por quadrante e cada roda gira no próprio eixo. Aceita geometria comprimida
+  com meshopt (`EXT_meshopt_compression`). O crédito do modelo (lido do próprio arquivo) aparece no canto da casa 3D.
+- **Modelos incluídos:** *2024 BYD Seal* e *2024 BYD Dolphin*, de **Ddiaz Design** (Sketchfab), licença
+  **CC BY-NC-SA 4.0** — uso não comercial, com atribuição; as cópias daqui são versões com a geometria comprimida
+  (meshopt, `gltf-transform optimize --compress meshopt`) e seguem a mesma licença.
+  Fontes: https://sketchfab.com/3d-models/2024-byd-seal-2e82d2aaaa3d47debf39b1160d3fe376 e
+  https://sketchfab.com/3d-models/2024-byd-dolphin-e8f3cf54c0e545b1b290d7a55ca77fca
+
+### Privacidade e consentimento (ética do IoB)
+
+Uma casa que aprende com o comportamento de quem mora nela precisa ser transparente. Em `/painel/#privacidade`
+(botão **Privacidade** no topo do painel), no espírito da LGPD (Lei 13.709/2018 — finalidade, necessidade,
+transparência, acesso e eliminação):
+
+| Dado | Para quê |
+|---|---|
+| Movimento no PIR (só "houve movimento" e a hora, sem identificar quem) | presença, rotina, modo ausente, alarme |
+| Temperatura e umidade (1 amostra a cada 5 min) | gráficos e conforto da janela |
+| Luzes, porta, janela, alarme e modo (cada mudança, com a origem) | linha do tempo e consumo |
+| Carro e carregador (na garagem, carregando, bateria) | consumo e tarifa branca |
+| Escolhas do morador (rotinas, modo ausente, limite da janela) | fazer a casa agir como ele pediu |
+| **Não é coletado:** imagem, som, localização, nomes, contatos, dados de outros aparelhos | — |
+
+- **Quem acessa:** quem tem a senha do painel; os sensores passam pelo Blynk Cloud; o histórico fica no banco do projeto
+  (Supabase) ou só na memória do servidor. Nada é vendido nem repassado.
+- **Consentimento:** no primeiro acesso a aba Casa mostra o aviso ("Concordo" / "Ver detalhes"); o registro (data e hora)
+  fica na tabela `config` e vira evento `privacidade` no histórico.
+- **Pausar a coleta:** a casa continua funcionando (controles, cenas, regras do firmware), mas nada novo é gravado e a
+  rotina/conforto deixam de aprender. Ao retomar, o estado atual vira o ponto de partida dos gráficos.
+- **Retenção:** 7, 30 ou 90 dias (padrão 90; o que passar disso é apagado na hora e todo dia).
+- **Acesso e eliminação:** "Baixar meus dados" (`GET /api/privacidade/exportar`, JSON com leituras e eventos) e
+  "Apagar todo o histórico" (`POST /api/privacidade/apagar {"confirmar":"APAGAR"}`; fica só o registro de que foi apagado).
+- API: `GET /api/privacidade`, `POST /api/privacidade {"consentir":true}` · `{"pausado":true}` · `{"retencaoDias":30}`;
+  o stream traz `state.privacidade`.
+
+### Insights do dia e alertas (aba IoB e aba Casa)
+
+- **Hoje na casa** (`GET /api/insights?dia=hoje|ontem|data`, `server/insights.js`): detecções e pico de presença por hora,
+  tempo de luz geral ligada, janela aberta N× (quantas pela regra do calor e quantas na mão), disparos do alarme e energia
+  do dia (I3, com a parte do carro), comparados com a média dos 7 dias anteriores (no dia em andamento, proporcional às
+  horas que já passaram), mais frases curtas que contam o dia.
+- **Alertas** (avaliados a cada 5 s, `state.alertas` no stream): porta destrancada há mais de 10 min (Trancar), movimento
+  com o alarme armado (Desarmar — fica até alguém ver, mesmo depois dos 4 s do buzzer), ≥ 30 °C com a janela fechada no
+  manual há 2 min (Abrir a janela), NodeMCU offline há 2 min (ao vivo) e carro com menos de 20 % sem carregar (Carregar).
+  Aparecem no topo da aba Casa e no feed da casa 3D; "Ok, já vi" silencia até a condição acabar. Cada alerta novo vira
+  evento `alerta` no histórico. API: `POST /api/alertas/:id {"resposta":"executar"|"ok"}`.
+- **Avisos no celular:** com permissão, cada alerta novo vira notificação do sistema pelo service worker (com o painel em
+  segundo plano; no iPhone só com o app instalado). O push pelo Blynk (eventos e notificações) fica para a K3.
+
+### Rotina aprendida e modo ausente (aba IoB)
+
+Em `/painel/#rotina` (aba **IoB**) a casa devolve o que aprendeu do histórico (`server/rotina.js`, recalculado a cada 30 min):
+
+- **Saída e chegada típicas** por dia da semana (mediana): pelos eventos do carro (V3) e, sem eles, pelo maior
+  intervalo sem presença no PIR durante o dia (≥ 3 h).
+- **Sugestões** que viram rotinas com um toque: acender a luz externa 10 min antes da chegada típica (só se a casa
+  estiver vazia) e armar o alarme 15 min depois da saída típica (só se o PIR não viu ninguém por 15 min). Sem presença
+  há 2 h: "armar o alarme agora?" e "ligar o modo ausente?" — essas aparecem também no topo da aba Casa.
+  "Agora não" esconde a sugestão por 7 dias (as de agora, por 3 h).
+- **Modo ausente** (anti-furto): acende e apaga os cômodos nas horas em que costumam ficar acesos (≥ 35 % do tempo,
+  padrão por hora dos últimos 14 dias), com alguns minutos de diferença por cômodo e por dia. O tempo em modo ausente
+  não entra no aprendizado. Desliga sozinho na cena Cheguei.
+- Escolhas (rotinas, dispensadas, modo ausente) ficam na tabela `config` do banco (memória no modo demonstração).
+  Cada disparo vai para o histórico como evento `rotina` (origem `rotina`); o modo ausente como evento `ausente`.
+- API: `GET /api/rotina`, `POST /api/rotina/sugestao {"id":"luz-chegada","aceitar":true}`,
+  `DELETE /api/rotina/automacao/:id`, `POST /api/ausente {"ligado":true}`. O stream traz `state.iob`
+  (sugestões e modo ausente).
+
+### Conforto adaptativo da janela (aba IoB)
+
+Cada vez que alguém abre ou fecha a janela **na mão** (painel, casa 3D, app/botão), a temperatura daquele momento
+vira uma pista do conforto da pessoa (`server/conforto.js`). Os limites aprendidos são médias móveis exponenciais
+(cada ajuste novo pesa 35 %), partindo dos do firmware (abre ≥ 30 °C, fecha ≤ 27 °C), com pelo menos 1,5 °C entre
+eles. Aberturas automáticas, de cena e do próprio conforto não contam.
+
+- O painel mostra "abre a partir de 28,8 °C · fecha abaixo de 26,5 °C" ao lado dos limites do firmware e os últimos ajustes.
+- **Aplicar no modo manual:** com a casa no manual, o servidor abre/fecha a janela pelos limites aprendidos
+  (origem `conforto`, espera 10 min depois de qualquer mudança da janela). No automático a placa segue o firmware (30/27 °C)
+  — o firmware não foi alterado.
+- `CONFORTO_V17=1` (modo ao vivo) publica o limite de abrir no V17 do Blynk para quando o firmware passar a lê-lo
+  (precisa do datastream V17 — junto com a K1).
+- API: `GET /api/conforto`, `POST /api/conforto {"aplicar":true}`; o stream traz `state.conforto`.
 
 ### Luzes por cômodo
 

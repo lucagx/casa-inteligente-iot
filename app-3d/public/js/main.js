@@ -173,7 +173,7 @@ const VIEWS = {
   sala:    { pos: [0.6, 2.7, 12.6], target: [-2.8, 1.3, 1.0], label: 'Sala' },
   entrada: { pos: [4.4, 2.9, 13.6], target: [3.6, 1.4, 3.6], label: 'Entrada' }, // fora da calçada da garagem: o carro não tapa a porta
   janela:  { pos: [12.2, 3.0, 3.4], target: [6.0, 1.9, 0.0], label: 'Janela' },
-  garagem: { pos: [16.8, 6.2, 12.6], target: [7.0, 0.8, 4.8], label: 'Garagem' }, // pega sensor e calçada inteira (carro em qualquer distância)
+  garagem: { pos: [17.6, 6.2, 12.6], target: [7.9, 0.8, 4.8], label: 'Garagem' }, // pega sensor e calçada inteira (carro em qualquer distância)
   cobertura: { pos: [10.5, 14.8, 14.5], target: [2.3, 6.9, 0.4], label: 'Cobertura' }, // LDR, sirene e antena no quadro
   corte:   { pos: [30, -4, 20], target: [0, -1.5, 0], label: 'Terreno' },
 };
@@ -341,7 +341,7 @@ async function init() {
   applyTier(tier);
   await step('Gerando texturas e modelando a casa…');
   const t0 = performance.now();
-  world = buildWorld(scene, { quality: buildTier, sensores: SENSORES });
+  world = buildWorld(scene, { quality: buildTier, sensores: SENSORES, onCreditoCarro: mostrarCreditoCarro });
   atmo = createAtmosphere(scene, { sun, hemi, renderer, bloomPass: bloom, hi: buildTier === 'high' });
   if (fixedNight !== null) atmo.setNight(Number(fixedNight));
 
@@ -392,3 +392,15 @@ async function init() {
   window.__casa = { world, atmo, flyTo, camera, controls, renderer, scene, composer, applyTier, get tier() { return tier; }, fps };
 }
 init();
+
+// V3: crédito do modelo 3D do carro (licenças Creative Commons pedem atribuição) — canto inferior direito
+function mostrarCreditoCarro(c) {
+  if (!c) return;
+  const el = document.createElement('a');
+  el.className = 'credito';
+  el.href = c.fonte || '#';
+  el.target = '_blank';
+  el.rel = 'noopener';
+  el.textContent = `Carro: ${c.titulo} · ${c.autor} · ${c.licenca}`;
+  document.body.appendChild(el);
+}

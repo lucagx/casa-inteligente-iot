@@ -28,6 +28,9 @@ services:
         value: America/Sao_Paulo
       - key: HISTORICO_POLL_MS
         value: "60000"
+      # consumo do dia (kWh) no V15 do Blynk a cada 5 min, só quando muda (K1, docs/BLYNK.md)
+      - key: CONSUMO_V15
+        value: "1"
       # segredos: preenchidos no painel do Render, nunca no repositório
       - key: BLYNK_TOKEN
         sync: false

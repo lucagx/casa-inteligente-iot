@@ -5,12 +5,22 @@ const { criarHistorico, semearDemo } = require("../server/history");
 
 function novo(valores = {}, opcoes = {}) {
   const estado = { values: valores, readAt: Date.now() };
-  const h = criarHistorico({ demo: false, valores: () => estado.values, lidoEm: () => estado.readAt, ...opcoes });
+  const h = criarHistorico({
+    demo: false,
+    valores: () => estado.values,
+    lidoEm: () => estado.readAt,
+    ...opcoes,
+  });
   // imita o setValues do server.js
   const set = (patch) => {
-    const mudou = {}, antes = {};
+    const mudou = {},
+      antes = {};
     for (const [k, v] of Object.entries(patch)) {
-      if (estado.values[k] !== String(v)) { antes[k] = estado.values[k]; estado.values[k] = String(v); mudou[k] = String(v); }
+      if (estado.values[k] !== String(v)) {
+        antes[k] = estado.values[k];
+        estado.values[k] = String(v);
+        mudou[k] = String(v);
+      }
     }
     if (Object.keys(mudou).length) h.registrar(mudou, antes);
   };
@@ -23,8 +33,14 @@ test("primeira leitura grava valores sem gerar eventos", async () => {
   set({ V0: 0, V3: 1, V7: "FECHADA", V11: 0 });
   const r = await h.leituras({ ...agora(), pinos: ["V0", "V7"] });
   assert.equal(r.motor, "memoria");
-  assert.deepEqual(r.pinos.V0.map((x) => x[1]), [0]);
-  assert.deepEqual(r.pinos.V7.map((x) => x[1]), ["FECHADA"]);
+  assert.deepEqual(
+    r.pinos.V0.map((x) => x[1]),
+    [0],
+  );
+  assert.deepEqual(
+    r.pinos.V7.map((x) => x[1]),
+    ["FECHADA"],
+  );
   assert.equal((await h.eventos(agora())).eventos.length, 0);
 });
 
@@ -40,7 +56,9 @@ test("mudanças viram eventos com a origem certa", async () => {
   set({ V8: "ALARME ATIVO" });
   set({ V1: 1 }); // sem comando: app do Blynk ou botão
 
-  const evs = (await h.eventos(agora())).eventos.reverse().map((e) => `${e.tipo}:${e.detalhe}:${e.origem}`);
+  const evs = (await h.eventos(agora())).eventos
+    .reverse()
+    .map((e) => `${e.tipo}:${e.detalhe}:${e.origem}`);
   assert.deepEqual(evs, [
     "presenca:detectada:sensor",
     "luz:ligada:automatico",
@@ -59,7 +77,9 @@ test("presença que termina e alarme rearmado não geram eventos extras", async 
   set({ V11: 0 });
   set({ V8: "ALARME ATIVO" });
   set({ V8: "ARMADO" });
-  const evs = (await h.eventos(agora())).eventos.map((e) => `${e.tipo}:${e.detalhe}`);
+  const evs = (await h.eventos(agora())).eventos.map(
+    (e) => `${e.tipo}:${e.detalhe}`,
+  );
   assert.deepEqual(evs.sort(), ["alarme:disparado", "presenca:detectada"]);
 });
 
@@ -79,8 +99,14 @@ test("temperatura e umidade só entram pela amostra de 5 min, e só com leitura 
   h.amostrar();
   h.amostrar(); // segunda chamada no mesmo intervalo não duplica
   r = await h.leituras({ ...agora(), pinos: ["V4", "V5"] });
-  assert.deepEqual(r.pinos.V4.map((x) => x[1]), [24.1]);
-  assert.deepEqual(r.pinos.V5.map((x) => x[1]), [58]);
+  assert.deepEqual(
+    r.pinos.V4.map((x) => x[1]),
+    [24.1],
+  );
+  assert.deepEqual(
+    r.pinos.V5.map((x) => x[1]),
+    [58],
+  );
 });
 
 test("antes traz o último valor anterior ao período (estado inicial dos gráficos)", async () => {
@@ -89,17 +115,25 @@ test("antes traz o último valor anterior ao período (estado inicial dos gráfi
   await h.descarregar();
   const depois = Date.now() + 5;
   await new Promise((r) => setTimeout(r, 10));
-  const r = await h.leituras({ desde: depois, ate: Date.now() + 1000, pinos: ["V0"] });
+  const r = await h.leituras({
+    desde: depois,
+    ate: Date.now() + 1000,
+    pinos: ["V0"],
+  });
   assert.deepEqual(r.pinos.V0, []);
   assert.equal(r.antes.V0[1], 1);
 });
 
 test("eventos filtram por tipo, respeitam o limite e vêm do mais novo ao mais antigo", async () => {
   const { h } = novo();
-  for (let i = 0; i < 5; i++) h.evento("luz", "painel", `n${i}`, Date.now() - (5 - i) * 1000);
+  for (let i = 0; i < 5; i++)
+    h.evento("luz", "painel", `n${i}`, Date.now() - (5 - i) * 1000);
   h.evento("porta", "painel", "destrancada");
   const r = await h.eventos({ ...agora(), tipos: ["luz"], limite: 3 });
-  assert.deepEqual(r.eventos.map((e) => e.detalhe), ["n4", "n3", "n2"]);
+  assert.deepEqual(
+    r.eventos.map((e) => e.detalhe),
+    ["n4", "n3", "n2"],
+  );
 });
 
 test("mudanças no mesmo milissegundo ganham ts crescente (ordem certa no Postgres)", async () => {
@@ -107,7 +141,9 @@ test("mudanças no mesmo milissegundo ganham ts crescente (ordem certa no Postgr
   set({ V7: "FECHADA" });
   set({ V7: "ABERTA" });
   set({ V7: "FECHADA" });
-  const ts = (await h.leituras({ ...agora(), pinos: ["V7"] })).pinos.V7.map((x) => x[0]);
+  const ts = (await h.leituras({ ...agora(), pinos: ["V7"] })).pinos.V7.map(
+    (x) => x[0],
+  );
   assert.equal(ts.length, 3);
   assert.ok(ts[0] < ts[1] && ts[1] < ts[2], JSON.stringify(ts));
 });
@@ -124,13 +160,20 @@ test("demonstração: 7 dias sintéticos coerentes", () => {
   const fim = Date.now();
   const { leituras, eventos } = semearDemo(fim);
   const temp = leituras.filter((l) => l.pino === "V4");
-  assert.ok(temp.length >= 7 * 288 - 2, `amostras de temperatura: ${temp.length}`);
+  assert.ok(
+    temp.length >= 7 * 288 - 2,
+    `amostras de temperatura: ${temp.length}`,
+  );
   for (const lista of [leituras, eventos]) {
-    for (let i = 1; i < lista.length; i++) assert.ok(lista[i].ts >= lista[i - 1].ts, "fora de ordem");
-    assert.ok(lista.every((x) => x.ts < fim && x.ts >= fim - 7 * 86400000 - 300000));
+    for (let i = 1; i < lista.length; i++)
+      assert.ok(lista[i].ts >= lista[i - 1].ts, "fora de ordem");
+    assert.ok(
+      lista.every((x) => x.ts < fim && x.ts >= fim - 7 * 86400000 - 300000),
+    );
   }
   const tipos = new Set(eventos.map((e) => e.tipo));
-  for (const t of ["presenca", "luz", "porta", "alarme", "modo"]) assert.ok(tipos.has(t), `sem eventos de ${t}`);
+  for (const t of ["presenca", "luz", "porta", "alarme", "modo"])
+    assert.ok(tipos.has(t), `sem eventos de ${t}`);
   const presencas = eventos.filter((e) => e.tipo === "presenca").length;
   assert.ok(presencas > 50 && presencas < 2000, `presenças: ${presencas}`);
   // mesma semente → mesmos dados
@@ -138,12 +181,56 @@ test("demonstração: 7 dias sintéticos coerentes", () => {
 });
 
 test("demonstração começa com histórico e com o estado atual como última leitura", async () => {
-  const estado = { values: { V0: "0", V3: "1", V4: "24.0", V7: "FECHADA" }, readAt: Date.now() };
-  const h = criarHistorico({ demo: true, url: "postgres://ignorada", valores: () => estado.values, lidoEm: () => estado.readAt });
+  const estado = {
+    values: { V0: "0", V3: "1", V4: "24.0", V7: "FECHADA" },
+    readAt: Date.now(),
+  };
+  const h = criarHistorico({
+    demo: true,
+    url: "postgres://ignorada",
+    valores: () => estado.values,
+    lidoEm: () => estado.readAt,
+  });
   assert.equal(h.motor, "memoria");
   await h.iniciar();
-  const r = await h.leituras({ desde: Date.now() - 7 * 86400000, ate: Date.now() + 1000, pinos: ["V4", "V7"] });
+  const r = await h.leituras({
+    desde: Date.now() - 7 * 86400000,
+    ate: Date.now() + 1000,
+    pinos: ["V4", "V7"],
+  });
   assert.ok(r.pinos.V4.length > 2000);
   assert.equal(r.pinos.V7.at(-1)[1], "FECHADA");
+  await h.fechar();
+});
+
+test("privacidade: coleta pausada não grava nada e apagar limpa o histórico", async () => {
+  const valores = { V0: "0", V1: "0" };
+  const h = criarHistorico({
+    demo: false,
+    valores: () => valores,
+    lidoEm: () => Date.now(),
+  });
+  await h.iniciar();
+  h.registrar({ V0: "1" }, { V0: "0" });
+  h.pausar(true);
+  h.registrar({ V0: "0" }, { V0: "1" });
+  h.evento("luz", "painel", "não deveria");
+  let r = await h.eventos({ desde: 0, ate: Date.now() + 1000, limite: 100 });
+  assert.deepEqual(r.eventos.map((e) => e.detalhe).reverse(), [
+    "ligada",
+    "coleta pausada",
+  ]);
+  h.pausar(false);
+  assert.equal(
+    (await h.contar()).eventos,
+    3,
+    "retomada também fica registrada",
+  );
+  await h.apagar();
+  r = await h.eventos({ desde: 0, ate: Date.now() + 1000, limite: 100 });
+  assert.deepEqual(
+    r.eventos.map((e) => e.detalhe),
+    ["histórico apagado"],
+  );
   await h.fechar();
 });

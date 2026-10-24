@@ -1,125 +1,219 @@
 <!doctype html>
 <html lang="pt-br">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#070b12">
-  <title>Casa Inteligente · Gêmeo Digital</title>
-  <!-- mesmo ícone do painel do celular (fica fora da senha, ver PWA_ABERTO no server.js) -->
-  <link rel="icon" href="/painel/icones/icone.svg" type="image/svg+xml">
-  <link rel="icon" href="/painel/icones/icone-192.png" type="image/png" sizes="192x192">
-  <link rel="apple-touch-icon" href="/painel/icones/icone-180.png">
-  <link rel="stylesheet" href="/vendor/fonts/unbounded/500.css">
-  <link rel="stylesheet" href="/vendor/fonts/unbounded/700.css">
-  <link rel="stylesheet" href="/vendor/fonts/dm-sans/400.css">
-  <link rel="stylesheet" href="/vendor/fonts/dm-sans/500.css">
-  <link rel="stylesheet" href="/vendor/fonts/dm-sans/700.css">
-  <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/400.css">
-  <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/600.css">
-  <link rel="stylesheet" href="/css/style.css">
-  <script type="importmap">
-    { "imports": {
-        "three": "/vendor/three/build/three.module.js",
-        "three/addons/": "/vendor/three/examples/jsm/"
-    } }
-  </script>
-</head>
-<body>
-  <div id="stage"></div>
-  <div class="vignette" aria-hidden="true"></div>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#070b12" />
+    <title>Casa Inteligente · Gêmeo Digital</title>
+    <!-- mesmo ícone do painel do celular (fica fora da senha, ver PWA_ABERTO no server.js) -->
+    <link rel="icon" href="/painel/icones/icone.svg" type="image/svg+xml" />
+    <link
+      rel="icon"
+      href="/painel/icones/icone-192.png"
+      type="image/png"
+      sizes="192x192"
+    />
+    <link rel="apple-touch-icon" href="/painel/icones/icone-180.png" />
+    <link rel="stylesheet" href="/vendor/fonts/unbounded/500.css" />
+    <link rel="stylesheet" href="/vendor/fonts/unbounded/700.css" />
+    <link rel="stylesheet" href="/vendor/fonts/dm-sans/400.css" />
+    <link rel="stylesheet" href="/vendor/fonts/dm-sans/500.css" />
+    <link rel="stylesheet" href="/vendor/fonts/dm-sans/700.css" />
+    <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/400.css" />
+    <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/600.css" />
+    <link rel="stylesheet" href="/css/style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js",
+          "three/addons/": "/vendor/three/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div class="vignette" aria-hidden="true"></div>
 
-  <div class="loader" id="loader">
-    <div class="loader-mark"></div>
-    <p>Montando a casa…</p>
-  </div>
-
-  <header class="brand">
-    <p class="eyebrow">FEPI · Internet das Coisas e do Comportamento</p>
-    <h1>Casa<br>Inteligente</h1>
-    <p class="sub">Gêmeo digital sincronizado com o NodeMCU ESP8266 via Blynk. O que acontece no protoboard acontece aqui.</p>
-  </header>
-
-  <div class="chips">
-    <div class="chip" id="chipLink"><i></i><span>Conectando…</span></div>
-    <div class="chip" id="chipDev"><i></i><span>NodeMCU</span></div>
-    <div class="chip quiet" id="chipAge"><span>aguardando dados</span></div>
-  </div>
-
-  <aside class="panel" id="panel">
-    <button class="sheet-toggle" id="sheetToggle" type="button" aria-label="Abrir painel"><span></span></button>
-    <div class="phead" id="phead" title="Arraste para mover · solte na borda para encaixar">
-      <span class="grip" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></span>
-      <span class="ptitle">Painel</span>
-      <button type="button" class="pbtn" id="pDock" aria-label="Encaixar do outro lado" title="Encaixar do outro lado"></button>
-      <button type="button" class="pbtn" id="pMin" aria-label="Minimizar painel" title="Minimizar (2)"></button>
+    <div class="loader" id="loader">
+      <div class="loader-mark"></div>
+      <p>Montando a casa…</p>
     </div>
 
-    <section>
-      <h2>Ambiente</h2>
-      <div class="sensors" id="sensors"></div>
-    </section>
+    <header class="brand">
+      <p class="eyebrow">FEPI · Internet das Coisas e do Comportamento</p>
+      <h1>Casa<br />Inteligente</h1>
+      <p class="sub">
+        Gêmeo digital sincronizado com o NodeMCU ESP8266 via Blynk. O que
+        acontece no protoboard acontece aqui.
+      </p>
+    </header>
 
-    <section>
-      <div class="h2row">
-        <h2>Controle</h2>
-        <div class="seg" role="group" aria-label="Modo de operação">
-          <button type="button" id="modeAuto">Automático</button>
-          <button type="button" id="modeManual">Manual</button>
+    <div class="chips">
+      <div class="chip" id="chipLink"><i></i><span>Conectando…</span></div>
+      <div class="chip" id="chipDev"><i></i><span>NodeMCU</span></div>
+      <div class="chip quiet" id="chipAge"><span>aguardando dados</span></div>
+    </div>
+
+    <aside class="panel" id="panel">
+      <button
+        class="sheet-toggle"
+        id="sheetToggle"
+        type="button"
+        aria-label="Abrir painel"
+      >
+        <span></span>
+      </button>
+      <div
+        class="phead"
+        id="phead"
+        title="Arraste para mover · solte na borda para encaixar"
+      >
+        <span class="grip" aria-hidden="true"
+          ><i></i><i></i><i></i><i></i><i></i><i></i
+        ></span>
+        <span class="ptitle">Painel</span>
+        <button
+          type="button"
+          class="pbtn"
+          id="pDock"
+          aria-label="Encaixar do outro lado"
+          title="Encaixar do outro lado"
+        ></button>
+        <button
+          type="button"
+          class="pbtn"
+          id="pMin"
+          aria-label="Minimizar painel"
+          title="Minimizar (2)"
+        ></button>
+      </div>
+
+      <section>
+        <h2>Ambiente</h2>
+        <div class="sensors" id="sensors"></div>
+      </section>
+
+      <section>
+        <div class="h2row">
+          <h2>Controle</h2>
+          <div class="seg" role="group" aria-label="Modo de operação">
+            <button type="button" id="modeAuto">Automático</button>
+            <button type="button" id="modeManual">Manual</button>
+          </div>
         </div>
-      </div>
-      <p class="hint" id="modeHint"></p>
-      <div class="devices" id="devices"></div>
-      <div class="rooms" id="rooms" role="group" aria-label="Luzes por cômodo"></div>
-    </section>
+        <p class="hint" id="modeHint"></p>
+        <div class="devices" id="devices"></div>
+        <div
+          class="rooms"
+          id="rooms"
+          role="group"
+          aria-label="Luzes por cômodo"
+        ></div>
+        <div
+          class="rooms"
+          id="ev3d"
+          role="group"
+          aria-label="Carro elétrico"
+        ></div>
+      </section>
 
-    <section>
-      <h2>Cenas</h2>
-      <div class="scenes" id="scenes"></div>
-    </section>
+      <section>
+        <h2>Cenas</h2>
+        <div class="scenes" id="scenes"></div>
+      </section>
 
-    <section class="skyctl">
-      <div class="h2row">
-        <h2>Céu</h2>
-        <div class="seg" id="skyMode" role="group" aria-label="Dia e noite">
-          <button type="button" data-sky="ldr">LDR</button>
-          <button type="button" data-sky="relogio">Relógio</button>
-          <button type="button" data-sky="manual">Manual</button>
+      <section class="skyctl">
+        <div class="h2row">
+          <h2>Céu</h2>
+          <div class="seg" id="skyMode" role="group" aria-label="Dia e noite">
+            <button type="button" data-sky="ldr">LDR</button>
+            <button type="button" data-sky="relogio">Relógio</button>
+            <button type="button" data-sky="manual">Manual</button>
+          </div>
         </div>
-      </div>
-      <p class="hint" id="skyHint"></p>
-      <div id="skyManual" hidden>
-        <label class="slider" for="skyHour"><span>Hora do dia</span><output id="skyHourV">12:00</output></label>
-        <input type="range" id="skyHour" min="0" max="24" step="0.25" value="12">
-      </div>
-    </section>
+        <p class="hint" id="skyHint"></p>
+        <div id="skyManual" hidden>
+          <label class="slider" for="skyHour"
+            ><span>Hora do dia</span><output id="skyHourV">12:00</output></label
+          >
+          <input
+            type="range"
+            id="skyHour"
+            min="0"
+            max="24"
+            step="0.25"
+            value="12"
+          />
+        </div>
+      </section>
 
-    <section class="sim" id="sim" hidden>
-      <h2>Simular sensores <span class="tagline">sem a placa</span></h2>
-      <label class="slider" for="simTemp"><span>Temperatura</span><output id="simTempV">24 °C</output></label>
-      <input type="range" id="simTemp" min="10" max="45" step="0.5" value="24">
-      <label class="slider" for="simLuz"><span>Luminosidade (LDR)</span><output id="simLuzV">70 %</output></label>
-      <input type="range" id="simLuz" min="0" max="100" step="1" value="70">
-      <label class="slider" for="simDist"><span>Carro na garagem (HC-SR04)</span><output id="simDistV">120 cm</output></label>
-      <input type="range" id="simDist" min="2" max="200" step="1" value="120">
-      <button type="button" class="hold" id="simPres">Segure para simular presença no PIR</button>
-    </section>
+      <section class="sim" id="sim" hidden>
+        <h2>Simular sensores <span class="tagline">sem a placa</span></h2>
+        <label class="slider" for="simTemp"
+          ><span>Temperatura</span><output id="simTempV">24 °C</output></label
+        >
+        <input
+          type="range"
+          id="simTemp"
+          min="10"
+          max="45"
+          step="0.5"
+          value="24"
+        />
+        <label class="slider" for="simLuz"
+          ><span>Luminosidade (LDR)</span
+          ><output id="simLuzV">70 %</output></label
+        >
+        <input type="range" id="simLuz" min="0" max="100" step="1" value="70" />
+        <label class="slider" for="simDist"
+          ><span>Carro na garagem (HC-SR04)</span
+          ><output id="simDistV">120 cm</output></label
+        >
+        <input
+          type="range"
+          id="simDist"
+          min="2"
+          max="200"
+          step="1"
+          value="120"
+        />
+        <button type="button" class="hold" id="simPres">
+          Segure para simular presença no PIR
+        </button>
+      </section>
 
-    <div class="err" id="errBox" hidden></div>
-    <button type="button" class="quality" id="quality">Qualidade</button>
-  </aside>
+      <div class="err" id="errBox" hidden></div>
+      <button type="button" class="quality" id="quality">Qualidade</button>
+    </aside>
 
-  <div class="hud" id="hud" hidden></div>
+    <div class="hud" id="hud" hidden></div>
 
-  <div class="dock-bar">
-    <nav class="views" id="views" aria-label="Câmeras"></nav>
-    <div class="layouts" id="layouts" role="group" aria-label="Layout da tela"></div>
-  </div>
-  <div class="feed" id="feed">
-    <div class="feed-rows" id="feedRows" aria-live="polite"></div>
-    <button type="button" class="feed-toggle" id="feedToggle" aria-expanded="true">Eventos</button>
-  </div>
-  <div class="toast" id="toast" role="status"></div>
+    <div class="dock-bar">
+      <nav class="views" id="views" aria-label="Câmeras"></nav>
+      <div
+        class="layouts"
+        id="layouts"
+        role="group"
+        aria-label="Layout da tela"
+      ></div>
+    </div>
+    <div class="feed" id="feed">
+      <div class="feed-rows" id="feedRows" aria-live="polite"></div>
+      <button
+        type="button"
+        class="feed-toggle"
+        id="feedToggle"
+        aria-expanded="true"
+      >
+        Eventos
+      </button>
+    </div>
+    <div class="toast" id="toast" role="status"></div>
 
-  <script type="module" src="/js/main.js"></script>
-</body>
+    <script type="module" src="/js/main.js"></script>
+  </body>
 </html>

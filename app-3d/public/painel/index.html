@@ -1,160 +1,532 @@
 <!doctype html>
 <html lang="pt-br">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#070b12">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Casa">
-  <title>Casa Inteligente · Painel</title>
-  <link rel="manifest" href="/painel/manifest.webmanifest">
-  <link rel="icon" href="/painel/icones/icone.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/painel/icones/icone-180.png">
-  <link rel="stylesheet" href="/vendor/fonts/unbounded/700.css">
-  <link rel="stylesheet" href="/vendor/fonts/dm-sans/400.css">
-  <link rel="stylesheet" href="/vendor/fonts/dm-sans/500.css">
-  <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/400.css">
-  <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/600.css">
-  <link rel="stylesheet" href="/vendor/uplot/uPlot.min.css">
-  <link rel="stylesheet" href="/painel/painel.css">
-</head>
-<body>
-  <div class="vignette" aria-hidden="true"></div>
-  <div class="wrap">
-    <header class="top">
-      <div>
-        <p class="eyebrow">FEPI · IoT + IoB</p>
-        <h1>Casa<br>Inteligente</h1>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#070b12" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
+    <meta name="apple-mobile-web-app-title" content="Casa" />
+    <title>Casa Inteligente · Painel</title>
+    <link rel="manifest" href="/painel/manifest.webmanifest" />
+    <link rel="icon" href="/painel/icones/icone.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/painel/icones/icone-180.png" />
+    <link rel="stylesheet" href="/vendor/fonts/unbounded/700.css" />
+    <link rel="stylesheet" href="/vendor/fonts/dm-sans/400.css" />
+    <link rel="stylesheet" href="/vendor/fonts/dm-sans/500.css" />
+    <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/400.css" />
+    <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/600.css" />
+    <link rel="stylesheet" href="/vendor/uplot/uPlot.min.css" />
+    <link rel="stylesheet" href="/painel/painel.css" />
+  </head>
+  <body>
+    <div class="vignette" aria-hidden="true"></div>
+    <div class="wrap">
+      <header class="top">
+        <div>
+          <p class="eyebrow">FEPI · IoT + IoB</p>
+          <h1>Casa<br />Inteligente</h1>
+        </div>
+        <div class="acts">
+          <button type="button" class="ibtn" id="install" hidden>
+            Instalar
+          </button>
+          <a
+            class="ibtn"
+            href="#privacidade"
+            title="O que a casa guarda e seus controles"
+            >Privacidade</a
+          >
+          <a class="ibtn" href="/" title="Abrir a casa 3D">Casa 3D</a>
+        </div>
+      </header>
+
+      <div class="chips">
+        <div class="chip" id="chipLink"><i></i><span>Conectando…</span></div>
+        <div class="chip" id="chipDev"><i></i><span>NodeMCU</span></div>
+        <div class="chip quiet" id="chipAge"><span>aguardando dados</span></div>
       </div>
-      <div class="acts">
-        <button type="button" class="ibtn" id="install" hidden>Instalar</button>
-        <a class="ibtn" href="/" title="Abrir a casa 3D">Casa 3D</a>
-      </div>
-    </header>
 
-    <div class="chips">
-      <div class="chip" id="chipLink"><i></i><span>Conectando…</span></div>
-      <div class="chip" id="chipDev"><i></i><span>NodeMCU</span></div>
-      <div class="chip quiet" id="chipAge"><span>aguardando dados</span></div>
-    </div>
-
-    <div class="tab" id="tab-casa">
-    <section>
-      <h2>Ambiente</h2>
-      <div class="sensors" id="sensors"></div>
-    </section>
-
-    <section>
-      <h2>Modo</h2>
-      <div class="seg" role="group" aria-label="Modo de operação">
-        <button type="button" id="modeAuto">Automático</button>
-        <button type="button" id="modeManual">Manual</button>
-      </div>
-      <p class="hint" id="modeHint"></p>
-    </section>
-
-    <section>
-      <h2>Cenas</h2>
-      <div class="scenes" id="scenes"></div>
-    </section>
-
-    <section>
-      <h2>Luzes</h2>
-      <div class="devices" id="lights"></div>
-      <p class="hint">A luz geral é o LED do protoboard (D1): fica acesa enquanto algum cômodo estiver aceso e apaga
-        quando todos apagam. Ligar a geral acende todos; desligar apaga todos.</p>
-    </section>
-
-    <section>
-      <h2>Controles</h2>
-      <div class="devices" id="devices"></div>
-    </section>
-
-    </div>
-
-    <!-- I2: histórico (gráficos e linha do tempo) — montado por historico.js ao abrir a aba -->
-    <div class="tab" id="tab-historico" hidden>
-      <section>
-        <div class="h2row">
-          <h2>Temperatura e umidade</h2>
-          <div class="seg mini" role="group" aria-label="Período">
-            <button type="button" data-periodo="24h" class="on">24 h</button>
-            <button type="button" data-periodo="7d">7 dias</button>
+      <div class="tab" id="tab-casa">
+        <!-- I8: consentimento (some depois de aceito) e aviso de coleta pausada -->
+        <div class="card cons" id="consCasa" hidden>
+          <b>Esta casa aprende com o seu comportamento</b>
+          <p>
+            Para mostrar gráficos, consumo, rotina e alertas, o painel guarda
+            quando há movimento, luzes, porta, janela, alarme e temperatura.
+            Nada de câmera, microfone ou localização. Você pode pausar ou apagar
+            quando quiser.
+          </p>
+          <div class="sbtn">
+            <button type="button" class="ibtn ok" data-cons="sim">
+              Concordo
+            </button>
+            <button type="button" class="ibtn" data-cons="ver">
+              Ver detalhes
+            </button>
           </div>
         </div>
-        <div class="card"><div class="chart" id="chTemp"></div></div>
-      </section>
-      <section>
-        <h2>Presença por hora <span class="tagline" id="hmTotal"></span></h2>
-        <div class="card"><div class="heat" id="heat"></div></div>
-        <p class="hint">Cada quadrado é uma hora dos últimos 7 dias; quanto mais claro, mais detecções do PIR.</p>
-      </section>
-      <section>
-        <h2>Luz geral ligada por dia</h2>
-        <div class="card"><div class="bars" id="luzDia"></div></div>
-      </section>
-      <section>
-        <div class="h2row">
-          <h2>Linha do tempo</h2>
-          <div class="seg mini" role="group" aria-label="Filtro" id="tlFiltro">
-            <button type="button" data-tipo="" class="on">Tudo</button>
-            <button type="button" data-tipo="luz">Luz</button>
-            <button type="button" data-tipo="presenca,alarme">Segurança</button>
-            <button type="button" data-tipo="cena">Cenas</button>
+        <p class="hint pausa" id="pausaCasa" hidden>
+          Coleta pausada: a casa funciona normalmente, mas não guarda nem
+          aprende nada novo. <a href="#privacidade">Retomar</a>
+        </p>
+        <!-- I7: alertas ativos (porta aberta, invasão, calor, placa offline, bateria) vindos do stream -->
+        <div class="sugs" id="alertasCasa" hidden></div>
+        <!-- I5: sugestão de agora (armar o alarme, modo ausente) vinda do stream -->
+        <div class="sugs" id="sugCasa" hidden></div>
+        <section>
+          <h2>Ambiente</h2>
+          <div class="sensors" id="sensors"></div>
+        </section>
+
+        <section>
+          <h2>Modo</h2>
+          <div class="seg" role="group" aria-label="Modo de operação">
+            <button type="button" id="modeAuto">Automático</button>
+            <button type="button" id="modeManual">Manual</button>
+          </div>
+          <p class="hint" id="modeHint"></p>
+        </section>
+
+        <section>
+          <h2>Cenas</h2>
+          <div class="scenes" id="scenes"></div>
+        </section>
+
+        <section>
+          <h2>Luzes</h2>
+          <div class="devices" id="lights"></div>
+          <p class="hint">
+            A luz geral é o LED do protoboard (D1): fica acesa enquanto algum
+            cômodo estiver aceso e apaga quando todos apagam. Ligar a geral
+            acende todos; desligar apaga todos.
+          </p>
+        </section>
+
+        <section>
+          <h2>Controles</h2>
+          <div class="devices" id="devices"></div>
+        </section>
+
+        <!-- V3: carregador do carro elétrico (virtual, fora do protoboard) -->
+        <section>
+          <h2>Carro elétrico</h2>
+          <div class="devices ev" id="ev"></div>
+        </section>
+      </div>
+
+      <!-- I5: rotina aprendida, sugestões, modo ausente e automações — montado por rotina.js ao abrir a aba -->
+      <div class="tab" id="tab-rotina" hidden>
+        <!-- I7: insights do dia -->
+        <section>
+          <div class="h2row">
+            <h2>Hoje na casa</h2>
+            <div class="seg mini" role="group" aria-label="Dia" id="inDia">
+              <button type="button" data-dia="hoje" class="on">Hoje</button>
+              <button type="button" data-dia="ontem">Ontem</button>
+            </div>
+          </div>
+          <div class="card insights">
+            <div class="ink">
+              <span><b id="inDet">--</b>detecções</span
+              ><span><b id="inLuz">--</b>luz ligada</span
+              ><span><b id="inJanela">--</b>janela</span
+              ><span><b id="inEnergia">--</b>energia</span>
+            </div>
+            <div class="inhoras" id="inHoras" title="Presença por hora"></div>
+            <ul class="infrases" id="inFrases"></ul>
+            <p class="hint" id="inNota"></p>
+          </div>
+          <p class="err" id="inErro" hidden></p>
+        </section>
+        <section>
+          <h2>Avisos no celular</h2>
+          <p class="hint" id="avisosTxt"></p>
+          <button type="button" class="ibtn" id="avisosBtn" hidden>
+            Permitir notificações
+          </button>
+        </section>
+        <section>
+          <h2>Sugestões da casa</h2>
+          <div class="sugs" id="rSugestoes"></div>
+        </section>
+        <section>
+          <h2>Modo ausente</h2>
+          <div class="devices">
+            <button
+              class="device geral"
+              id="dev-ausente"
+              type="button"
+              aria-pressed="false"
+            >
+              <span class="dicon"
+                ><svg
+                  class="ico"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3 11l9-7 9 7" />
+                  <path d="M5 10v10h14V10" />
+                  <path d="M10 20v-5h4v5" /></svg
+              ></span>
+              <span class="dtext"
+                ><span class="dname">Simular casa ocupada</span
+                ><span class="dstate" id="st-dev-ausente">--</span
+                ><span class="dhw">anti-furto · luzes no seu padrão</span></span
+              >
+              <span class="switch"><i></i></span>
+            </button>
+          </div>
+          <p class="hint">
+            Com a casa vazia, os cômodos acendem e apagam nas horas em que
+            costumam ficar acesos (destacados abaixo), com alguns minutos de
+            diferença a cada dia. Desliga sozinho na cena Cheguei.
+          </p>
+          <div class="card"><div class="padrao" id="rPadrao"></div></div>
+        </section>
+        <!-- I6: conforto adaptativo da janela -->
+        <section>
+          <h2>Conforto da janela</h2>
+          <div class="card conf">
+            <div class="clim">
+              <span class="k">Abre a partir de</span><b id="cfAbrir">--</b
+              ><small id="cfAbrirFw"></small>
+            </div>
+            <div class="clim">
+              <span class="k">Fecha abaixo de</span><b id="cfFechar">--</b
+              ><small id="cfFecharFw"></small>
+            </div>
+            <div class="cescala" id="cfEscala"></div>
+          </div>
+          <div class="devices">
+            <button
+              class="device geral"
+              id="dev-conforto"
+              type="button"
+              aria-pressed="false"
+            >
+              <span class="dicon"
+                ><svg
+                  class="ico"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="4" y="4" width="16" height="16" rx="1" />
+                  <path d="M12 4v16M4 12h16" /></svg
+              ></span>
+              <span class="dtext"
+                ><span class="dname">Aplicar no modo manual</span
+                ><span class="dstate" id="st-dev-conforto">--</span
+                ><span class="dhw"
+                  >servidor abre/fecha pelo limite aprendido</span
+                ></span
+              >
+              <span class="switch"><i></i></span>
+            </button>
+          </div>
+          <p class="hint" id="cfTexto"></p>
+          <ol class="timeline" id="cfAjustes"></ol>
+        </section>
+
+        <section>
+          <h2>Sua rotina</h2>
+          <p class="hint" id="rResumo"></p>
+          <div class="card">
+            <div class="rdias">
+              <div class="rdia cab"><span>Dia</span><b>Sai</b><b>Chega</b></div>
+              <div id="rDias"></div>
+            </div>
+          </div>
+          <p class="hint">
+            Aprendido do histórico: saída e chegada do carro e, sem ele, o maior
+            intervalo sem presença no PIR (≥ 3 h).
+          </p>
+        </section>
+        <section>
+          <h2>Rotinas ativas</h2>
+          <div id="rAutomacoes" class="sugs"></div>
+        </section>
+        <p class="err" id="rotErro" hidden></p>
+      </div>
+
+      <!-- I8: privacidade e consentimento (ética do IoB) — montado por privacidade.js ao abrir -->
+      <div class="tab" id="tab-privacidade" hidden>
+        <section>
+          <h2>Privacidade</h2>
+          <p class="hint">
+            Uma casa que aprende com o comportamento de quem mora nela precisa
+            ser transparente sobre o que guarda. Aqui estão os dados, a
+            finalidade de cada um, quem tem acesso e os seus controles, no
+            espírito da LGPD (Lei 13.709/2018): finalidade, necessidade,
+            transparência, acesso e eliminação.
+          </p>
+        </section>
+        <section>
+          <h2>O que é guardado e para quê</h2>
+          <div class="card pvtab">
+            <div>
+              <b>Movimento (PIR)</b
+              ><span
+                >Só "houve movimento" e a hora, sem identificar quem. Gráfico de
+                presença, rotina, modo ausente e alarme.</span
+              >
+            </div>
+            <div>
+              <b>Temperatura e umidade</b
+              ><span
+                >Uma amostra a cada 5 min. Gráficos e conforto da janela.</span
+              >
+            </div>
+            <div>
+              <b>Luzes, porta, janela, alarme e modo</b
+              ><span
+                >Cada mudança, com a origem (painel, cena, automático,
+                app/botão). Linha do tempo e consumo.</span
+              >
+            </div>
+            <div>
+              <b>Carro e carregador</b
+              ><span
+                >Na garagem ou não, carregando e % da bateria. Consumo e tarifa
+                branca.</span
+              >
+            </div>
+            <div>
+              <b>Suas escolhas</b
+              ><span
+                >Rotinas aceitas, modo ausente, limite da janela e estas
+                preferências.</span
+              >
+            </div>
+            <div class="nao">
+              <b>Não é coletado</b
+              ><span
+                >Imagem, som, localização, nomes, contatos ou dados de outros
+                aparelhos.</span
+              >
+            </div>
+          </div>
+        </section>
+        <section>
+          <h2>Quem tem acesso</h2>
+          <p class="hint">
+            Quem tem a senha do painel (casa 3D e celular). Os sensores passam
+            pelo Blynk Cloud (a placa fala com ele); o histórico fica no banco
+            do projeto (Supabase) ou só na memória do servidor. Nada é vendido
+            nem enviado a terceiros para propaganda. No modo demonstração os
+            dados são sintéticos e somem ao reiniciar.
+          </p>
+          <p class="hint" id="pvGuardado"></p>
+        </section>
+        <section>
+          <h2>Seus controles</h2>
+          <div class="devices">
+            <button
+              class="device geral"
+              id="dev-coleta"
+              type="button"
+              aria-pressed="true"
+            >
+              <span class="dicon"
+                ><svg
+                  class="ico"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.7"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" /></svg
+              ></span>
+              <span class="dtext"
+                ><span class="dname">Coleta de dados</span
+                ><span class="dstate" id="st-dev-coleta">--</span
+                ><span class="dhw">pausar não desliga a casa</span></span
+              >
+              <span class="switch"><i></i></span>
+            </button>
+          </div>
+          <div class="h2row pvret">
+            <span class="hint">Guardar o histórico por</span>
+            <div class="seg mini" role="group" aria-label="Retenção" id="pvRet">
+              <button type="button" data-dias="7">7 dias</button
+              ><button type="button" data-dias="30">30 dias</button
+              ><button type="button" data-dias="90">90 dias</button>
+            </div>
+          </div>
+          <div class="pvbtns">
+            <a class="ibtn" href="/api/privacidade/exportar" download
+              >Baixar meus dados (JSON)</a
+            >
+            <button type="button" class="ibtn perigo" id="pvApagar">
+              Apagar todo o histórico
+            </button>
+          </div>
+          <p class="hint" id="pvConsTxt"></p>
+          <button type="button" class="ibtn" id="pvConsentir" hidden>
+            Registrar meu consentimento
+          </button>
+        </section>
+      </div>
+
+      <!-- I2: histórico (gráficos e linha do tempo) — montado por historico.js ao abrir a aba -->
+      <div class="tab" id="tab-historico" hidden>
+        <section>
+          <div class="h2row">
+            <h2>Temperatura e umidade</h2>
+            <div class="seg mini" role="group" aria-label="Período">
+              <button type="button" data-periodo="24h" class="on">24 h</button>
+              <button type="button" data-periodo="7d">7 dias</button>
+            </div>
+          </div>
+          <div class="card"><div class="chart" id="chTemp"></div></div>
+        </section>
+        <section>
+          <h2>Presença por hora <span class="tagline" id="hmTotal"></span></h2>
+          <div class="card"><div class="heat" id="heat"></div></div>
+          <p class="hint">
+            Cada quadrado é uma hora dos últimos 7 dias; quanto mais claro, mais
+            detecções do PIR.
+          </p>
+        </section>
+        <section>
+          <h2>Luz geral ligada por dia</h2>
+          <div class="card"><div class="bars" id="luzDia"></div></div>
+        </section>
+        <section>
+          <div class="h2row">
+            <h2>Linha do tempo</h2>
+            <div
+              class="seg mini"
+              role="group"
+              aria-label="Filtro"
+              id="tlFiltro"
+            >
+              <button type="button" data-tipo="" class="on">Tudo</button>
+              <button type="button" data-tipo="luz">Luz</button>
+              <button type="button" data-tipo="presenca,alarme">
+                Segurança
+              </button>
+              <button type="button" data-tipo="cena">Cenas</button>
+            </div>
+          </div>
+          <ol class="timeline" id="timeline"></ol>
+          <button type="button" class="ibtn more" id="tlMais" hidden>
+            Mostrar mais
+          </button>
+        </section>
+        <p class="err" id="histErro" hidden></p>
+      </div>
+
+      <!-- I3: consumo de energia e economia — montado por consumo.js ao abrir a aba -->
+      <div class="tab" id="tab-consumo" hidden>
+        <div class="kpis">
+          <div class="card kpi">
+            <span class="k">Hoje</span><b id="cHoje">--</b
+            ><small id="cHojeR"></small>
+          </div>
+          <div class="card kpi">
+            <span class="k">Este mês</span><b id="cMes">--</b
+            ><small id="cMesR"></small>
           </div>
         </div>
-        <ol class="timeline" id="timeline"></ol>
-        <button type="button" class="ibtn more" id="tlMais" hidden>Mostrar mais</button>
-      </section>
-      <p class="err" id="histErro" hidden></p>
-    </div>
-
-    <!-- I3: consumo de energia e economia — montado por consumo.js ao abrir a aba -->
-    <div class="tab" id="tab-consumo" hidden>
-      <div class="kpis">
-        <div class="card kpi"><span class="k">Hoje</span><b id="cHoje">--</b><small id="cHojeR"></small></div>
-        <div class="card kpi"><span class="k">Este mês</span><b id="cMes">--</b><small id="cMesR"></small></div>
-      </div>
-      <section>
-        <h2>Meta do mês</h2>
-        <div class="card"><div class="meta"><i id="cMetaBar"></i></div><p class="hint" id="cMetaTxt"></p></div>
-      </section>
-      <div class="card cmp" id="cCmp" hidden><b id="cCmpN"></b><span id="cCmpT"></span></div>
-      <div class="card dica"><span class="k">Dica da casa</span><p id="cDica">--</p></div>
-      <section>
-        <h2>Últimos 7 dias (kWh)</h2>
-        <div class="card"><div class="bars" id="cDias"></div><div class="legenda" id="cLegenda"></div></div>
-      </section>
-      <section>
-        <h2>Por cômodo no mês</h2>
-        <div class="card" id="cComodos"></div>
-      </section>
-      <section>
-        <h2>Tarifa branca</h2>
-        <div class="card">
-          <div class="faixas" id="cFaixas"></div>
-          <div class="tleg"><span><i class="fora"></i>fora de ponta</span><span><i class="intermediaria"></i>intermediária</span><span><i class="ponta"></i>ponta 18h–21h</span></div>
-          <div class="tarifas"><span>Convencional<b id="cConv">--</b></span><span>Branca<b id="cBranca">--</b></span></div>
-          <p class="hint" id="cBrancaTxt"></p>
+        <section>
+          <h2>Meta do mês</h2>
+          <div class="card">
+            <div class="meta"><i id="cMetaBar"></i></div>
+            <p class="hint" id="cMetaTxt"></p>
+          </div>
+        </section>
+        <div class="card cmp" id="cCmp" hidden>
+          <b id="cCmpN"></b><span id="cCmpT"></span>
         </div>
-      </section>
-      <p class="hint" id="cNota"></p>
-      <p class="err" id="consErro" hidden></p>
+        <div class="card dica">
+          <span class="k">Dica da casa</span>
+          <p id="cDica">--</p>
+        </div>
+        <section>
+          <h2>Últimos 7 dias (kWh)</h2>
+          <div class="card">
+            <div class="bars" id="cDias"></div>
+            <div class="legenda" id="cLegenda"></div>
+          </div>
+        </section>
+        <section>
+          <h2>Por cômodo no mês</h2>
+          <div class="card" id="cComodos"></div>
+        </section>
+        <section>
+          <h2>Tarifa branca</h2>
+          <div class="card">
+            <div class="faixas" id="cFaixas"></div>
+            <div class="tleg">
+              <span><i class="fora"></i>fora de ponta</span
+              ><span><i class="intermediaria"></i>intermediária</span
+              ><span><i class="ponta"></i>ponta 18h–21h</span>
+            </div>
+            <div class="tarifas">
+              <span>Convencional<b id="cConv">--</b></span
+              ><span>Branca<b id="cBranca">--</b></span>
+            </div>
+            <p class="hint" id="cBrancaTxt"></p>
+          </div>
+        </section>
+        <p class="hint" id="cNota"></p>
+        <p class="err" id="consErro" hidden></p>
+      </div>
+
+      <div class="err" id="errBox" hidden></div>
+
+      <footer class="foot">
+        NodeMCU ESP8266 · Blynk · <a href="/">abrir a casa 3D</a>
+      </footer>
     </div>
+    <nav class="tabbar" aria-label="Seções">
+      <a href="#casa" data-tab="casa" class="on"
+        ><svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M3 11l9-7 9 7" />
+          <path d="M5 10v10h14V10" /></svg
+        >Casa</a
+      >
+      <a href="#rotina" data-tab="rotina"
+        ><svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2" /></svg
+        >IoB<em class="badge" id="tabRotinaN" hidden></em
+      ></a>
+      <a href="#historico" data-tab="historico"
+        ><svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 19V5M4 19h16" />
+          <path d="M7 15l4-5 3 3 5-7" /></svg
+        >Histórico</a
+      >
+      <a href="#consumo" data-tab="consumo"
+        ><svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M13 2L4 14h7l-1 8 9-12h-7z" /></svg
+        >Consumo</a
+      >
+    </nav>
+    <div class="toast" id="toast" role="status"></div>
 
-    <div class="err" id="errBox" hidden></div>
-
-    <footer class="foot">NodeMCU ESP8266 · Blynk · <a href="/">abrir a casa 3D</a></footer>
-  </div>
-  <nav class="tabbar" aria-label="Seções">
-    <a href="#casa" data-tab="casa" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>Casa</a>
-    <a href="#historico" data-tab="historico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16"/><path d="M7 15l4-5 3 3 5-7"/></svg>Histórico</a>
-    <a href="#consumo" data-tab="consumo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>Consumo</a>
-  </nav>
-  <div class="toast" id="toast" role="status"></div>
-
-  <script type="module" src="/painel/painel.js"></script>
-</body>
+    <script type="module" src="/painel/painel.js"></script>
+  </body>
 </html>
