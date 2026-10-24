@@ -26,6 +26,7 @@
   V10 = luminosidade 0-100 % (LDR)
   V11 = presenca
   V12 = distancia do carro em cm (HC-SR04)
+  V13 = Terminal (log da placa)
   V14 = deteccoes de presenca hoje
 */
 
@@ -34,7 +35,7 @@
 #include "secrets.h"
 
 // Suba este número a cada versão enviada pelo Blynk.Air (formato X.Y.Z)
-#define BLYNK_FIRMWARE_VERSION "1.2.0"
+#define BLYNK_FIRMWARE_VERSION "1.3.0"
 #define BLYNK_PRINT Serial
 
 // Sensores opcionais: o LDR e o HC-SR04 sairam do protoboard (instaveis e atrapalhavam o PIR).
@@ -120,6 +121,25 @@ unsigned long proximaReconexao = 0;
 unsigned long proximaLeituraLdr = 0;
 unsigned long proximaMedicaoDistancia = 0;
 
+// Terminal do Blynk (V13): uma linha "20:14 janela aberta (auto)" por acao que so a placa conhece.
+// O que vem do painel/app e registrado pelo servidor (server/blynk.js), para nao duplicar linhas.
+void logTerminal(const char* texto, const char* origem) {
+  if (!Blynk.connected()) return;
+  char linha[96];
+  if (epochBase != 0) {
+    unsigned long t = epochBase + (millis() - millisEpochBase) / 1000 + FUSO_SEGUNDOS;
+    snprintf(linha, sizeof linha, "%02lu:%02lu %s (%s)", (t / 3600) % 24, (t / 60) % 60, texto, origem);
+  } else {
+    snprintf(linha, sizeof linha, "%s (%s)", texto, origem);   // relogio do Blynk ainda nao chegou
+  }
+  Blynk.virtualWrite(V13, linha);
+}
+
+// "botao" enquanto o botao fisico aciona o alarme; senao o comando veio do Blynk (app, painel, automacao)
+const char* origemAlarme = "Blynk";
+unsigned long ultimoPushInvasao = 0;
+const unsigned long INTERVALO_PUSH_MS = 60000;   // um push por minuto, no maximo (o PIR repete)
+
 void publicarEstados() {
   if (!Blynk.connected()) return;
 
@@ -157,7 +177,10 @@ void atualizarLuzAutomatica() {
 #else
   bool desejada = presenca;
 #endif
-  if (desejada != luzLigada) controlarLuz(desejada);
+  if (desejada != luzLigada) {
+    controlarLuz(desejada);
+    logTerminal(desejada ? "luz ligada" : "luz desligada", "auto");
+  }
 }
 
 void controlarPorta(bool destrancar) {
@@ -203,9 +226,17 @@ void dispararAlarme() {
 
   if (Blynk.connected()) Blynk.virtualWrite(V8, "ALARME ATIVO");
   Serial.println("[ALARME] presenca detectada");
+
+  // push no celular direto da placa (evento "invasao" do template), sem depender do servidor
+  if (Blynk.connected() && (ultimoPushInvasao == 0 || millis() - ultimoPushInvasao >= INTERVALO_PUSH_MS)) {
+    ultimoPushInvasao = millis();
+    Blynk.logEvent("invasao", "Movimento com o alarme armado");
+    logTerminal("ALARME disparado", "sensor");
+  }
 }
 
 void definirAlarme(bool armar) {
+  bool mudou = alarmeArmado != armar;   // o sync do Blynk ao reconectar repete o valor: sem linha nova
   alarmeArmado = armar;
 
   if (!alarmeArmado) pararAlarme();
@@ -216,6 +247,7 @@ void definirAlarme(bool armar) {
   }
 
   Serial.printf("[ALARME] %s\n", alarmeArmado ? "ARMADO" : "DESARMADO");
+  if (mudou) logTerminal(alarmeArmado ? "alarme armado" : "alarme desarmado", origemAlarme);
 }
 
 void verificarBotao() {
@@ -232,7 +264,9 @@ void verificarBotao() {
 
     // INPUT_PULLUP: pressionado = LOW
     if (estadoEstavelBotao == LOW) {
+      origemAlarme = "botao";
       definirAlarme(!alarmeArmado);
+      origemAlarme = "Blynk";
     }
   }
 }
@@ -306,8 +340,10 @@ void lerTemperaturaUmidade() {
   if (modoAutomatico) {
     if (temperatura >= TEMP_ABRIR_JANELA && anguloJanela == 0) {
       moverJanela(90);
+      logTerminal("janela aberta (calor)", "auto");
     } else if (temperatura <= TEMP_FECHAR_JANELA && anguloJanela == 90) {
       moverJanela(0);
+      logTerminal("janela fechada", "auto");
     }
   }
 }

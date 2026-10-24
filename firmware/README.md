@@ -1,6 +1,6 @@
 # Firmware — NodeMCU ESP8266
 
-`casa_inteligente/casa_inteligente.ino` é o firmware em uso (versão **1.2.0**). Credenciais ficam em
+`casa_inteligente/casa_inteligente.ino` é o firmware em uso (versão **1.3.0**). Credenciais ficam em
 `casa_inteligente/secrets.h` (fora do git); o modelo é `secrets.example.h`.
 
 ## Gravar
@@ -74,6 +74,14 @@ religue as peças como em [Ligações dos sensores opcionais](#ligações-dos-se
 | V6 | Claro/Escuro (só com `USAR_LDR 1`) | String | — |
 | V10 | Luminosidade (só com `USAR_LDR 1`) | Integer | 0–100 (%) |
 | V12 | Distância do carro (só com `USAR_HCSR04 1`) | Integer | 0–200 (cm) |
+
+## Terminal e push (V13, evento `invasao`) — firmware 1.3.0
+
+A placa escreve no Terminal V13 uma linha por ação que só ela conhece (`logTerminal()`): luz e janela pela regra
+automática (`20:14 luz ligada (auto)`), alarme armado/desarmado (origem `botao` ou `Blynk`) e disparo
+(`ALARME disparado (sensor)`). No disparo manda também `Blynk.logEvent("invasao", ...)` (push no celular), no máximo
+um por minuto. O evento `invasao` precisa existir no template (ver `docs/BLYNK.md`). Comandos vindos do painel/app
+ficam por conta do servidor. A hora vem do relógio do Blynk (a mesma do contador de detecções).
 
 ## Regras no modo automático
 

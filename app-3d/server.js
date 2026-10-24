@@ -25,6 +25,7 @@
  * Datastreams do servidor no Blynk (K1, server/blynk.js): V16 cena, V18 carregador, V23 luz externa, V25 bateria —
  *                    publicados quando mudam e lidos de volta (app do Blynk e automações acionam o servidor).
  *                    Eventos (K3): alertas da I7 e o resumo das 21h viram eventos/push do Blynk (logEvent).
+ *                    Terminal V13 (F3, só servidor): cada evento do histórico vira uma linha com hora e origem.
  * CARREGADOR_KW, BATERIA_KWH : carregador do carro elétrico (V3, server/carregador.js) — virtual, fora do protoboard.
  * Rotina aprendida, sugestões, automações e modo ausente (I5): server/rotina.js, rotas /api/rotina e /api/ausente.
  * Conforto adaptativo da janela (I6): server/conforto.js, rotas /api/conforto. CONFORTO_V17=1 publica o limite no V17.
@@ -310,6 +311,15 @@ async function pollDevice() {
     }
     placaVista = true;
   } catch { /* mantém último estado */ }
+}
+
+// F3: Terminal do dashboard (V13) — o servidor escreve uma linha por evento do histórico (ao vivo)
+if (MODE === "live") {
+  const terminal = require("./server/blynk").criarTerminal({
+    enviar: (txt) => blynkUpdate("V13", txt),
+    avisar: (txt) => console.warn(`[blynk] ${txt}`),
+  });
+  historico.aoEvento((ev) => terminal.evento(ev));
 }
 
 // K3: evento do Blynk (linha do tempo + push) — o código precisa existir no template (docs/BLYNK.md)

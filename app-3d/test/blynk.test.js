@@ -66,24 +66,65 @@ test("eventos (K3): alerta da I7 vira evento do Blynk; offline fica com o embuti
   let t = new Date(2026, 9, 22, 10, 0).getTime();
   const enviados = [];
   const ev = criarEventos({ enviar: async (c, d) => enviados.push([c, d]), agora: () => t });
-  assert.equal(ev.alerta({ id: "invasao", titulo: "Movimento com o alarme armado", texto: "O buzzer disparou." }), true);
+  assert.equal(ev.alerta({ id: "porta", titulo: "Porta destrancada", texto: "Há 12 min." }), true);
   assert.equal(ev.alerta({ id: "offline", titulo: "NodeMCU offline", texto: "" }), false);
-  assert.equal(ev.alerta({ id: "invasao", titulo: "x", texto: "y" }), false, "repetido");
+  assert.equal(ev.alerta({ id: "invasao", titulo: "x", texto: "y" }), false, "a invasão sai da placa");
+  assert.equal(ev.alerta({ id: "porta", titulo: "x", texto: "y" }), false, "repetido");
   t += 16 * 60000;
-  assert.equal(ev.alerta({ id: "invasao", titulo: "x", texto: "y" }), true);
+  assert.equal(ev.alerta({ id: "porta", titulo: "x", texto: "y" }), true);
   assert.equal(ev.resumo("a".repeat(400)), true);
   await espera();
-  assert.deepEqual(enviados[0], ["invasao", "Movimento com o alarme armado. O buzzer disparou."]);
+  assert.deepEqual(enviados[0], ["porta_aberta", "Porta destrancada. Há 12 min."]);
   assert.equal(enviados[2][0], "resumo_diario");
   assert.ok(enviados[2][1].length <= 250);
 });
 
 test("eventos (K3): para no limite do dia e volta no dia seguinte", () => {
-  let t = new Date(2026, 9, 22, 8, 0).getTime();
+  let t = new Date(2026, 9, 22, 0, 1).getTime();
   const ev = criarEventos({ enviar: async () => {}, agora: () => t });
   let n = 0;
-  for (let i = 0; i < 200; i++) { t += 16 * 60000 / 4; if (ev.alerta({ id: ["porta", "calor", "bateria", "invasao"][i % 4], titulo: "", texto: "" })) n++; }
-  assert.ok(n <= 90);
+  for (let i = 0; i < 200; i++) { t += 16 * 60000 / 3; if (ev.alerta({ id: ["porta", "calor", "bateria"][i % 3], titulo: "", texto: "" })) n++; }
+  assert.equal(n, 90, "para no limite do dia");
   t = new Date(2026, 9, 24, 8, 0).getTime();
   assert.equal(ev.alerta({ id: "porta", titulo: "", texto: "" }), true);
+});
+
+test("terminal (F3): linha com hora, evento, detalhe e origem; presença no máx. 1 por minuto", async () => {
+  const { criarTerminal, linhaTerminal } = require("../server/blynk");
+  const ts = new Date(2026, 9, 22, 20, 14).getTime();
+  assert.equal(linhaTerminal({ ts, tipo: "luz", origem: "painel", detalhe: "ligada" }), "20:14 luz ligada (painel)");
+  assert.equal(linhaTerminal({ ts, tipo: "janela", origem: "dispositivo", detalhe: "aberta" }), "20:14 janela aberta (app/botão)");
+  const linhas = [];
+  const t = criarTerminal({ enviar: async (x) => linhas.push(x) });
+  t.evento({ ts, tipo: "presenca", origem: "sensor", detalhe: "detectada" });
+  t.evento({ ts: ts + 20000, tipo: "presenca", origem: "sensor", detalhe: "detectada" });
+  t.evento({ ts: ts + 30000, tipo: "luz", origem: "painel", detalhe: "ligada" });
+  await espera(); await espera();
+  assert.deepEqual(linhas, ["20:14 presenca detectada (sensor)", "20:14 luz ligada (painel)"]);
+});
+
+test("terminal (F3): sem datastream avisa uma vez e não insiste", async () => {
+  const { criarTerminal } = require("../server/blynk");
+  let tentativas = 0, tt = 0;
+  const avisos = [];
+  const t = criarTerminal({ enviar: async () => { tentativas++; throw new Error("Blynk 400"); }, avisar: (x) => avisos.push(x), agora: () => tt });
+  const e = (n) => ({ ts: 1000 + n, tipo: "luz", origem: "painel", detalhe: "ligada" });
+  t.evento(e(1)); await espera(); await espera();
+  t.evento(e(2)); await espera(); await espera();
+  assert.equal(tentativas, 1);
+  assert.equal(avisos.length, 1);
+});
+
+test("terminal (F3): o que a placa já escreve (alarme, regra automática) não é repetido pelo servidor", async () => {
+  const { criarTerminal } = require("../server/blynk");
+  const linhas = [];
+  const t = criarTerminal({ enviar: async (x) => linhas.push(x) });
+  const ts = new Date(2026, 9, 22, 20, 14).getTime();
+  t.evento({ ts, tipo: "alarme", origem: "dispositivo", detalhe: "armado" });
+  t.evento({ ts, tipo: "alarme", origem: "sensor", detalhe: "disparado" });
+  t.evento({ ts, tipo: "luz", origem: "automatico", detalhe: "ligada" });
+  t.evento({ ts, tipo: "janela", origem: "automatico", detalhe: "aberta" });
+  t.evento({ ts, tipo: "luz", origem: "painel", detalhe: "ligada" });
+  await espera(); await espera();
+  assert.deepEqual(linhas, ["20:14 luz ligada (painel)"]);
 });

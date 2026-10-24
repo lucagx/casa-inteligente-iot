@@ -27,7 +27,8 @@ const CENAS = [null, "cheguei", "sai", "dormir", "apresentacao"];
 const ENTRADAS = [PINOS.cena, PINOS.carregador, PINOS.externa];
 const ESPERA_FALHA_MS = 10 * 60000;
 // alerta da I7 (server/insights.js) → código do evento no Console (Events & Notifications)
-const EVENTOS = { invasao: "invasao", porta: "porta_aberta", calor: "calor_janela", bateria: "bateria_baixa" };
+// (a invasão não está aqui: o push dela sai da placa — firmware 1.3.0, Blynk.logEvent no dispararAlarme)
+const EVENTOS = { porta: "porta_aberta", calor: "calor_janela", bateria: "bateria_baixa" };
 const RESUMO = "resumo_diario";
 const LIMITE_DIA = 90, REPETIR_MS = 15 * 60000, MAX_TEXTO = 250;
 
@@ -127,4 +128,56 @@ function criarEventos({ enviar, avisar = () => {}, agora = () => Date.now() }) {
   };
 }
 
-module.exports = { criarPonte, criarEventos, saida, acao, PINOS, CENAS, ENTRADAS, EVENTOS, RESUMO };
+// ------------------------------------------------------------------
+// Terminal V13 (F3, parte do servidor): cada evento do histórico vira uma linha "20:14 luz ligada (painel)"
+// ------------------------------------------------------------------
+const ORIGEM = { painel: "painel", cena: "cena", automatico: "automático", dispositivo: "app/botão", sensor: "sensor",
+  sistema: "sistema", casa3d: "casa 3D", blynk: "Blynk", rotina: "rotina", conforto: "conforto" };
+const FILA_MAX = 50, PRESENCA_MS = 60000;
+
+/** Linha do Terminal para um evento do histórico ({ ts, tipo, origem, detalhe }). */
+function linhaTerminal(e) {
+  const hora = new Date(e.ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return `${hora} ${e.tipo} ${e.detalhe} (${ORIGEM[e.origem] || e.origem})`;
+}
+
+/**
+ * enviar(texto) → Promise (update do V13) · avisar(texto) opcional.
+ * evento(e) entra numa fila e sai uma linha por vez, em ordem. Presença: no máximo uma por minuto (o PIR repete).
+ * Sem o datastream V13 o envio falha: avisa uma vez e fica ESPERA_FALHA_MS sem tentar.
+ */
+// A placa (firmware 1.3.0) já escreve no V13 o que só ela conhece: regra automática de luz e janela e o alarme
+// (botão, comandos do Blynk, disparo). O servidor não repete essas linhas.
+const DA_PLACA = (e) => e.tipo === "alarme" || (e.origem === "automatico" && (e.tipo === "luz" || e.tipo === "janela"));
+
+function criarTerminal({ enviar, avisar = () => {}, agora = () => Date.now() }) {
+  const fila = [];
+  let rodando = false, falhouEm = null, ultimaPresenca = 0;
+
+  async function esvaziar() {
+    if (rodando) return;
+    rodando = true;
+    while (fila.length) {
+      if (falhouEm !== null && agora() - falhouEm < ESPERA_FALHA_MS) { fila.length = 0; break; }
+      try { await enviar(fila.shift()); falhouEm = null; }
+      catch (err) { if (falhouEm === null) avisar(`Terminal V13: ${err.message} (o datastream existe no Console?)`); falhouEm = agora(); }
+    }
+    rodando = false;
+  }
+
+  return {
+    evento(e) {
+      if (DA_PLACA(e)) return false;
+      if (e.tipo === "presenca") {
+        if (e.ts - ultimaPresenca < PRESENCA_MS) return false;
+        ultimaPresenca = e.ts;
+      }
+      if (fila.length >= FILA_MAX) fila.shift();
+      fila.push(linhaTerminal(e));
+      esvaziar();
+      return true;
+    },
+  };
+}
+
+module.exports = { criarPonte, criarEventos, criarTerminal, linhaTerminal, saida, acao, PINOS, CENAS, ENTRADAS, EVENTOS, RESUMO };

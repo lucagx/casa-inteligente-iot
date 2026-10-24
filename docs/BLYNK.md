@@ -159,7 +159,7 @@ dispositivo e chegam como notificação no app. Não depende do firmware: o serv
 
 | Nome | Event Code | Tipo | Quando o servidor manda |
 |---|---|---|---|
-| Invasão | `invasao` | Critical | movimento com o alarme armado (o buzzer disparou) |
+| Invasão | `invasao` | Critical | movimento com o alarme armado — **sai da placa** (firmware 1.3.0), não do servidor |
 | Porta destrancada | `porta_aberta` | Warning | porta destrancada há mais de 10 min |
 | Calor com a janela fechada | `calor_janela` | Warning | ≥ 30 °C com a janela fechada no manual, há 2 min |
 | Bateria baixa | `bateria_baixa` | Info | carro na garagem com menos de 20 %, sem carregar |
@@ -171,12 +171,14 @@ Em cada evento, na aba **Notifications**: ligue **Enable notifications** e marqu
 **Placa offline:** não precisa criar evento. Na mesma aba existe o evento embutido **Offline** — ligue as
 notificações dele (push) e um atraso de 2 min, para não avisar a cada queda rápida do Wi-Fi.
 
-Limites respeitados pelo servidor: o Blynk aceita 100 eventos por dia por dispositivo; o servidor para em 90 e não
-repete o mesmo evento em menos de 15 min. Cada alerta é mandado uma vez, até a condição acabar.
+Limites: o Blynk aceita 100 eventos por dia por dispositivo; o servidor para em 90 e não repete o mesmo evento em
+menos de 15 min, e cada alerta é mandado uma vez, até a condição acabar. A placa manda no máximo um push de invasão
+por minuto.
 
-**Testar:** com o servidor ao vivo, arme o alarme e passe a mão no PIR — o push "Invasão" deve chegar no celular e
-aparecer na linha do tempo do dispositivo no Console. Se não chegar, o log do servidor mostra
-`[blynk] evento invasao: ...` com o motivo.
+**Testar a invasão (placa com o firmware 1.3.0, funciona com o servidor desligado):** arme o alarme (botão ou
+dashboard) e passe a mão no PIR — o buzzer toca, o push "Invasão" chega no celular e aparece na linha do tempo do
+dispositivo no Console. **Testar os outros (servidor ao vivo):** destranque a porta e espere 10 min, ou veja o log do
+servidor, que mostra `[blynk] evento porta_aberta: ...` se o Blynk recusar.
 
 ### Automações (5 no plano Free)
 
@@ -187,12 +189,12 @@ Enterprise e não é esta.)
 
 **Onde:** menu principal do Console (fora do template) → **Automations** → **+ Create Automation**. Em "When" escolha
 horário, fuso America/Sao_Paulo e a repetição; em "Do this", **Control Device** → Mini Casa Inteligente → marque só a
-propriedade da tabela e defina o valor. O Blynk Free não tem gatilho de pôr do sol: usa-se horário fixo.
+propriedade da tabela e defina o valor. Em "Quando" também existe o gatilho de **pôr do sol** (a automação 2 usa ele; o Console mostra o horário da próxima execução, ex.: 18:10).
 
 | # | Nome | Quando | Repetir | Propriedade | Valor | Depende do servidor? |
 |---|---|---|---|---|---|---|
 | 1 | Armar o alarme | 23:00 | Diárias | Alarme Armado (V9) | ligado | não (a placa aplica) |
-| 2 | Luz externa ao anoitecer | 18:00 | Diárias | Luz Externa (V23) | 60 | sim |
+| 2 | Luz externa ao anoitecer | pôr do sol | Diárias | Luz Externa (V23) | 60 | sim |
 | 3 | Apagar a luz externa | 00:30 | Diárias | Luz Externa (V23) | 0 | sim |
 | 4 | Carregar fora de ponta | 22:00 | Semanal, seg a sex | Carregador Do Carro (V18) | ligado | sim |
 
@@ -202,3 +204,35 @@ dormindo, quando ele acordar). Para mantê-lo acordado, um monitor gratuito (Upt
 
 A luz externa acende pelo servidor e, pela regra da luz geral, também acende o LED do D1 na placa. Se o modo
 automático estiver ligado, o servidor troca para o manual antes (senão o firmware apagaria o D1 sem presença).
+
+## F3 — Terminal (V13), parte do servidor
+
+O widget **Terminal** (V13, "Log da casa") recebe do servidor uma linha por evento do histórico, com hora e origem:
+
+```
+20:14 luz ligada (painel)
+20:15 janela aberta (automático)
+20:31 cena Saí (Blynk)
+```
+
+- Só no modo ao vivo; origens: painel, cena, automático, app/botão, sensor, sistema, casa 3D, Blynk.
+- Presença: no máximo uma linha por minuto (o PIR repete). Fila de 50 linhas, enviadas em ordem.
+- Cada linha gasta 1 mensagem da cota (uma centena por dia no uso normal).
+- Sem o datastream V13 no Console, o servidor avisa uma vez no log e tenta de novo em 10 min.
+- **Quem escreve o quê (sem linhas duplicadas):** a placa (firmware 1.3.0, `logTerminal()`) escreve a regra
+  automática de luz e janela (origem "auto"), o alarme (botão, comando do Blynk, disparo) e manda o push da invasão
+  (`Blynk.logEvent`). O servidor escreve o resto (comandos do painel, cenas, porta, modo, carro, presença, sistema) e
+  não repete as linhas da placa.
+- Com a placa ainda no firmware 1.2.0, essas linhas da placa não aparecem no Terminal e o push da invasão não sai.
+
+### Gravar o firmware 1.3.0 (antes de 21/11, enquanto a placa está com você)
+
+1. Tarefa **ESP8266: compilar** — precisa terminar sem erro (o `secrets.h` tem de existir).
+2. Tarefa **ESP8266: gravar pela USB** (ou pelo Wi-Fi/Blynk.Air, subindo `BLYNK_FIRMWARE_VERSION`, já em "1.3.0").
+3. Monitor serial: `firmware 1.3.0 (LDR desligado, HC-SR04 desligado)` e `[BLYNK] conectado`.
+4. Testes na placa (vale anotar com capturas para o relatório):
+   - passe a mão no PIR com o modo automático ligado: a luz acende e o Terminal mostra `luz ligada (auto)`;
+   - aperte o botão do D6: `alarme armado (botao)`; passe a mão: buzzer, push "Invasão" e `ALARME disparado (sensor)`;
+   - aqueça o DHT11 até 30 °C (ou use o dedo): `janela aberta (calor) (auto)`;
+   - com o modo manual, mande um comando pelo dashboard: sem linha da placa (o servidor registra, se estiver ligado).
+5. Se algo der errado, grave de novo a 1.2.0 (`git show 91c6155:firmware/casa_inteligente/casa_inteligente.ino`).
