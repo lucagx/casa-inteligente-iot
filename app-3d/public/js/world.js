@@ -458,11 +458,9 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     const n = (Math.sin(0.31 * x + 1.1) * Math.sin(0.27 * z + 0.4) + 0.6 * Math.sin(0.67 * x - 0.5 * z + 2.0) + 0.35 * Math.cos(1.1 * x + 0.9 * z)) / 1.95;
     return Math.pow(n * 0.5 + 0.5, 1.5) * REL_MAX * suave(0, REL_MARGEM, d) * suave(0, 1.0, borda); // ^1,5: colinas mais definidas, planícies entre elas
   }
-  // V6: chão fotográfico (Poly Haven forrest_ground_01, CC0: grama, terra e gravetos; a foto cobre 2 m). Sozinha ela se
-  // repetiria visivelmente pelo terreno todo, então o gramado procedural (4,6 m por repetição) multiplica a cor da foto
-  // em manchas grandes; o tom é puxado para um verde mais fundo. Perfil leve: só a cor.
-  // V8: chão de grama fotográfico com relevo (Grass002: grama, trevo e folhas; cor, normal, AO e rugosidade; 2 m por repetição)
-  // Com o prado (perfis alto e médio) o chão é a terra do próprio pacote de grama (Dirt_Ground), como nas imagens de referência.
+  // Chão fotográfico (2 m por repetição): sob o prado, a terra do pacote de grama (Dirt_Ground) com a Grass002 por cima
+  // em manchas; no perfil leve, só a cor da Grass002. O gramado procedural (4,6 m por repetição) multiplica a cor em
+  // manchas grandes para a foto não se repetir visivelmente.
   const fotoSolo = TX.photoMaps(quality === 'low' ? 'grass002' : 'dirt_ground', { repeat: [LW / 2.0, LD / 2.0], leve: quality === 'low', ao: true });
   const matSolo = std({ ...fotoSolo, color: quality === 'low' ? 0xe6e6e6 : 0x7d6f58, roughness: 1 }); // terra escurecida entre as touceiras
   if (matSolo.normalMap) matSolo.normalScale.set(1.1, 1.1); // relevo da foto (1,6 ficava áspero demais)
@@ -1963,13 +1961,95 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
       stats.natureza = Math.round(tri);
       S.atualizaSombra = 2; // sombra do sol sob demanda: refaz com a grama nova
     });
-  }
-  // pedras decorativas
-  for (const [x, z, s] of [[-0.2, 7.3, 0.35], [0.2, 7.6, 0.22], [-7.3, 10.8, 0.4], [-6.9, 11.2, 0.25], [10.9, 11.0, 0.3]]) {
-    const r = shadowed(new THREE.Mesh(new THREE.DodecahedronGeometry(s, 1), M.stone));
-    r.position.set(x, s * 0.45 + terrainH(x, z), z);
-    r.scale.y = 0.6;
-    root.add(r);
+
+    // V8: pedras reais (Poly Haven, CC0) no lugar dos dodecaedros. Os conjuntos com musgo (rock_moss_set_01/02) trazem
+    // 7 e 8 pedras numa malha só: cada pedaço ligado vira uma variante. Grupos = uma pedra grande com musgo + 2 a 3 menores
+    // (rock_07, rock_09, stone_01) em volta, meio enterradas no relevo.
+    function separar(g, minTri) {
+      const idx = g.index.array, n = g.attributes.position.count, pai = new Int32Array(n).map((_, i) => i);
+      const raiz = (i) => { while (pai[i] !== i) { pai[i] = pai[pai[i]]; i = pai[i]; } return i; };
+      // vértices na mesma posição (costuras da textura) contam como um só, senão cada pedra vira várias lascas
+      const pos = g.attributes.position, mesmo = new Map();
+      for (let i = 0; i < n; i++) {
+        const k = `${Math.round(pos.getX(i) * 1e3)},${Math.round(pos.getY(i) * 1e3)},${Math.round(pos.getZ(i) * 1e3)}`;
+        if (mesmo.has(k)) pai[raiz(i)] = raiz(mesmo.get(k)); else mesmo.set(k, i);
+      }
+      for (let t = 0; t < idx.length; t += 3) { const a = raiz(idx[t]); pai[raiz(idx[t + 1])] = a; pai[raiz(idx[t + 2])] = a; }
+      const grupos = new Map();
+      for (let t = 0; t < idx.length; t += 3) { const r = raiz(idx[t]); if (!grupos.has(r)) grupos.set(r, []); grupos.get(r).push(idx[t], idx[t + 1], idx[t + 2]); }
+      return [...grupos.values()].filter((l) => l.length / 3 >= minTri).map((l) => {
+        const novo = new Map(), ix = [];
+        for (const v of l) { if (!novo.has(v)) novo.set(v, novo.size); ix.push(novo.get(v)); }
+        const ng = new THREE.BufferGeometry();
+        for (const [k, at] of Object.entries(g.attributes)) {
+          const arr = new Float32Array(novo.size * at.itemSize);
+          for (const [antigo, i] of novo) for (let j = 0; j < at.itemSize; j++) arr[i * at.itemSize + j] = at.getComponent(antigo, j);
+          ng.setAttribute(k, new THREE.BufferAttribute(arr, at.itemSize));
+        }
+        ng.setIndex(ix);
+        return ng;
+      });
+    }
+    // geometria centrada em x/z, base em y = 0, maior lado horizontal = 1 (a escala vira o tamanho em metros)
+    function normalizar(g) {
+      g.computeBoundingBox();
+      const b = g.boundingBox, c = b.getCenter(new THREE.Vector3()), t = b.getSize(new THREE.Vector3());
+      g.translate(-c.x, -b.min.y, -c.z);
+      g.scale(1 / Math.max(t.x, t.z), 1 / Math.max(t.x, t.z), 1 / Math.max(t.x, t.z));
+      g.computeBoundingSphere();
+      return g;
+    }
+    const pedra = (arq) => carregar(`pedras/${arq}.glb`).then((gl) => {
+      if (!gl) return [];
+      gl.scene.updateMatrixWorld(true);
+      const lista = [];
+      gl.scene.traverse((o) => { if (o.isMesh) lista.push({ geo: paraFloat(o.geometry.clone()).applyMatrix4(o.matrixWorld), mat: o.material }); });
+      // cor puxada para o cinza (65 %): as fotos vinham amarronzadas; o musgo continua verde, só mais discreto
+      for (const { mat } of lista) mat.onBeforeCompile = (sh) => {
+        sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+          float lumP = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(lumP) * vec3(0.98, 1.0, 1.02), 0.65);`);
+      };
+      return lista;
+    });
+    // rock_07 (avermelhada) e stone_01 (rosada) saíram: a cor parecia sujeira no gramado; ficam as cinzas
+    Promise.all(['rock_moss_set_01', 'rock_moss_set_02', 'rock_09'].map(pedra)).then(([m1, m2, r9]) => {
+      const grandes = [...m1, ...m2].flatMap(({ geo, mat }) => separar(geo, 300).map((g) => ({ geo: normalizar(g), mat })));
+      const pequenas = [...r9, ...[...m1, ...m2].flatMap(({ geo, mat }) => separar(geo, 300).map((g) => ({ geo: g, mat })))].map(({ geo, mat }) => ({ geo: normalizar(geo), mat }));
+      if (!grandes.length && !pequenas.length) return;
+      // [x, z, tamanho da maior em metros]: os 5 lugares das pedras antigas + base de algumas árvores e cantos do gramado
+      const GRUPOS = [[1.1, 7.7, 0.6], [-7.6, 11.0, 0.7], [10.9, 11.0, 0.65], [-12.6, -6.3, 0.9], [13.4, -7.6, 0.8],
+        [-11.0, 10.2, 0.7], [14.5, 10.4, 0.55], [-14.2, 3.4, 0.6], [5.6, -10.4, 0.6], [-2.6, -10.2, 0.7]];
+      const porVariante = new Map();
+      const add = (v, x, z, tam, giro) => {
+        // nunca dentro (nem encostada) da piscina, caminho, deck, garagem ou casa
+        const m = tam * 0.6;
+        if (!livre(x, z) || !livre(x + m, z) || !livre(x - m, z) || !livre(x, z + m) || !livre(x, z - m)) return;
+        if (!porVariante.has(v)) porVariante.set(v, []);
+        const h = tam * (0.75 + rr() * 0.4); // achatamento/altura variam
+        porVariante.get(v).push(new THREE.Matrix4().compose(new THREE.Vector3(x, terrainH(x, z) - 0.12 * tam, z),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler((rr() - 0.5) * 0.15, giro, (rr() - 0.5) * 0.15)), new THREE.Vector3(tam, h, tam)));
+      };
+      GRUPOS.forEach(([x, z, tam], i) => {
+        if (grandes.length) add(grandes[i % grandes.length], x, z, tam, rr() * 6.28);
+        const n = 2 + (i % 2);
+        for (let k = 0; k < n && pequenas.length; k++) {
+          const a = rr() * 6.28, d = tam * (0.55 + rr() * 0.4);
+          add(pequenas[(i + k) % pequenas.length], x + Math.cos(a) * d, z + Math.sin(a) * d, tam * (0.22 + rr() * 0.2), rr() * 6.28);
+        }
+      });
+      let tri = 0;
+      for (const [{ geo, mat }, mats] of porVariante) {
+        const im = new THREE.InstancedMesh(geo, mat, mats.length);
+        mats.forEach((m, k) => im.setMatrixAt(k, m));
+        im.castShadow = true; im.receiveShadow = true;
+        im.computeBoundingSphere();
+        root.add(im);
+        tri += geo.index.count / 3 * mats.length;
+      }
+      stats.pedras = Math.round(tri);
+      S.atualizaSombra = 2;
+    });
   }
 
   // ================================================================
