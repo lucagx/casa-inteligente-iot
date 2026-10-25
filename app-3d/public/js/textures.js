@@ -89,7 +89,7 @@ export function darkPlaster() {
 
 // Texturas fotográficas (Poly Haven, CC0 — public/texturas/CREDITOS.md): cor, normal e rugosidade de 1K em JPG.
 // Carregam em segundo plano (o material aparece com a cor base até chegarem). `leve` = só a cor (perfil de qualidade baixa).
-export function photoMaps(nome, { repeat = [1, 1], leve = false, rotacao = 0 } = {}) {
+export function photoMaps(nome, { repeat = [1, 1], leve = false, rotacao = 0, ao = false } = {}) {
   const loader = new THREE.TextureLoader();
   const carregar = (sufixo, cor) => {
     const t = loader.load(`/texturas/${nome}_${sufixo}_1k.jpg`);
@@ -101,7 +101,7 @@ export function photoMaps(nome, { repeat = [1, 1], leve = false, rotacao = 0 } =
     return t;
   };
   return leve ? { map: carregar('diff', true) }
-    : { map: carregar('diff', true), normalMap: carregar('nor_gl', false), roughnessMap: carregar('rough', false) };
+    : { map: carregar('diff', true), normalMap: carregar('nor_gl', false), roughnessMap: carregar('rough', false), ...(ao ? { aoMap: carregar('ao', false) } : {}) };
 }
 
 export function concrete() {

@@ -7,6 +7,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { FXAAPass } from 'three/addons/postprocessing/FXAAPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { buildWorld } from './world.js';
 import { createAtmosphere } from './atmosphere.js';
@@ -138,6 +139,22 @@ for (const [mat, from] of [[bloom.materialHighPassFilter, 'vec4 texel = texture2
 }
 const fxaa = new FXAAPass();
 composer.addPass(fxaa);
+// V8: suavização óptica leve — mistura a imagem com um desfoque 3×3 (60%) para tirar a nitidez exagerada da grama,
+// folhagem e texturas fotográficas, sem borrar a geometria (o raio é de 1 pixel)
+const suave = new ShaderPass({
+  uniforms: { tDiffuse: { value: null }, uForca: { value: 0.6 } },
+  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float uForca; varying vec2 vUv;
+    void main(){
+      vec2 p = 1.0 / vec2(textureSize(tDiffuse, 0));
+      vec4 c = texture2D(tDiffuse, vUv);
+      vec4 b = c * 0.5
+        + (texture2D(tDiffuse, vUv + vec2(p.x, 0.0)) + texture2D(tDiffuse, vUv - vec2(p.x, 0.0)) + texture2D(tDiffuse, vUv + vec2(0.0, p.y)) + texture2D(tDiffuse, vUv - vec2(0.0, p.y))) * 0.0875
+        + (texture2D(tDiffuse, vUv + p) + texture2D(tDiffuse, vUv - p) + texture2D(tDiffuse, vUv + vec2(p.x, -p.y)) + texture2D(tDiffuse, vUv - vec2(p.x, -p.y))) * 0.0375;
+      gl_FragColor = mix(c, b, uForca);
+    }`,
+});
+composer.addPass(suave);
 
 let prof = PROFILE[tier];
 let shadowDirty = 4; // quadros com sombra forçada
@@ -153,6 +170,7 @@ function applyTier(t, extraScale = 1) {
   if (gtao.enabled) gtao.setSize(W() * pr, H() * pr);
   bloom.enabled = prof.bloom;
   fxaa.enabled = prof.fxaa;
+  suave.enabled = !prof.fxaa;
   for (const target of [composer.renderTarget1, composer.renderTarget2]) {
     if (target.samples !== prof.msaa) { target.samples = prof.msaa; target.dispose(); }
   }
@@ -341,7 +359,10 @@ async function init() {
   applyTier(tier);
   await step('Gerando texturas e modelando a casa…');
   const t0 = performance.now();
-  world = buildWorld(scene, { quality: buildTier, sensores: SENSORES, onCreditoCarro: mostrarCreditoCarro });
+  world = buildWorld(scene, { quality: buildTier, sensores: SENSORES, 
+
+   });
+  //  onCreditoCarro: mostrarCreditoCarro;
   atmo = createAtmosphere(scene, { sun, hemi, renderer, bloomPass: bloom, hi: buildTier === 'high' });
   if (fixedNight !== null) atmo.setNight(Number(fixedNight));
 

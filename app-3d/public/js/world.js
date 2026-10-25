@@ -433,6 +433,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   // Terreno flutuante (maquete em corte)
   // ================================================================
   const LW = 32, LD = 24;
+  const ventoU = { value: 0 }; // V8: tempo do vento (grama)
   // grama e solo são lajes com o furo da piscina (Extrude com chanfro = bordas arredondadas como antes)
   const poolHole = [POOL.x - POOL.w / 2, POOL.x + POOL.w / 2, POOL.z - POOL.d / 2, POOL.z + POOL.d / 2];
   // V6: relevo. A laje de grama (topo reto) fica 1 cm abaixo de y = 0 e uma malha de relevo por cima sobe em colinas suaves
@@ -455,13 +456,15 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     const borda = Math.min(LW / 2 - 0.2 - Math.abs(x), LD / 2 - 0.2 - Math.abs(z));
     // três ondas de comprimentos diferentes (colinas largas e ondulação menor), normalizadas para 0–1
     const n = (Math.sin(0.31 * x + 1.1) * Math.sin(0.27 * z + 0.4) + 0.6 * Math.sin(0.67 * x - 0.5 * z + 2.0) + 0.35 * Math.cos(1.1 * x + 0.9 * z)) / 1.95;
-    return Math.pow(n * 0.5 + 0.5, 1.5) * REL_MAX * suave(0, REL_MARGEM, d) * suave(0, 1.8, borda); // ^1,5: colinas mais definidas, planícies entre elas
+    return Math.pow(n * 0.5 + 0.5, 1.5) * REL_MAX * suave(0, REL_MARGEM, d) * suave(0, 1.0, borda); // ^1,5: colinas mais definidas, planícies entre elas
   }
   // V6: chão fotográfico (Poly Haven forrest_ground_01, CC0: grama, terra e gravetos; a foto cobre 2 m). Sozinha ela se
   // repetiria visivelmente pelo terreno todo, então o gramado procedural (4,6 m por repetição) multiplica a cor da foto
   // em manchas grandes; o tom é puxado para um verde mais fundo. Perfil leve: só a cor.
-  const fotoSolo = TX.photoMaps('forrest_ground_01', { repeat: [LW / 2.0, LD / 2.0], leve: quality === 'low' });
-  const matSolo = std({ ...fotoSolo, color: 0xa6cf8a, roughness: 1 });
+  // V8: chão de grama fotográfico com relevo (Grass002: grama, trevo e folhas; cor, normal, AO e rugosidade; 2 m por repetição)
+  const fotoSolo = TX.photoMaps('grass002', { repeat: [LW / 2.0, LD / 2.0], leve: quality === 'low', ao: true });
+  const matSolo = std({ ...fotoSolo, color: 0xe6e6e6, roughness: 1 });
+  if (matSolo.normalMap) matSolo.normalScale.set(1.1, 1.1); // relevo da foto (1,6 ficava áspero demais)
   {
     const macro = M.grass.map, rep = macro.repeat.clone(), rf = fotoSolo.map.repeat.clone();
     matSolo.onBeforeCompile = (sh) => {
@@ -472,6 +475,13 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
         .replace('#include <common>', '#include <common>\nuniform sampler2D tMacro; uniform vec2 uMacroRep; uniform vec2 uFotoRep;')
         .replace('#include <map_fragment>', `#include <map_fragment>
           #ifdef USE_MAP
+          // V8: a foto sozinha fica "carregada" de longe. Mistura uma segunda escala (quebra a repetição) e, com a
+          // distância, troca o detalhe fino por uma versão desfocada (mip mais baixo): perto nítido, longe suave.
+          float longe = smoothstep(5.0, 22.0, length(vViewPosition));
+          vec3 cor2 = diffuse * texture2D(map, vMapUv * 0.43 + vec2(0.37, 0.71)).rgb;
+          vec3 corBorr = diffuse * texture2D(map, vMapUv, 3.5).rgb;
+          diffuseColor.rgb = mix(diffuseColor.rgb, cor2, 0.35);
+          diffuseColor.rgb = mix(diffuseColor.rgb, mix(corBorr, cor2, 0.3), longe * 0.75);
           vec3 macroCor = texture2D(tMacro, (vMapUv / uFotoRep) * uMacroRep).rgb;
           diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * clamp(macroCor * 2.0, 0.4, 1.6), 0.8);
           #endif`);
@@ -513,6 +523,55 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     matMalha.vertexColors = true;
     matMalha.onBeforeCompile = matSolo.onBeforeCompile;
     root.add(shadowed(new THREE.Mesh(g, matMalha), false, true));
+
+    // V8: beiral de grama. Antes o gramado terminava numa quina reta sobre a lateral da laje (uma "chapa"). Agora a malha
+    // continua além da borda, dobra para baixo como um torrão de grama (altura e saliência variam ao longo do perímetro)
+    // e vai escurecendo para a terra, cobrindo a lateral da laje.
+    const ex = LW / 2 - 0.2, ez = LD / 2 - 0.2, per = [];
+    for (let i = 0; i < nx; i++) per.push([px0 + i * passo, -ez, 0, -1]);
+    for (let j = 0; j < nz; j++) per.push([ex, pz0 + j * passo, 1, 0]);
+    for (let i = nx; i > 0; i--) per.push([px0 + i * passo, ez, 0, 1]);
+    for (let j = nz; j > 0; j--) per.push([-ex, pz0 + j * passo, -1, 0]);
+    // nos cantos a direção para fora é a diagonal
+    const nPer = per.length;
+    const dirs = per.map((p, k) => {
+      const a = per[(k + nPer - 1) % nPer], mudou = a[2] !== p[2] || a[3] !== p[3]; // o canto é o 1º ponto de cada lado
+      const dx = p[2] + (mudou ? a[2] : 0), dz = p[3] + (mudou ? a[3] : 0);
+      const l = Math.hypot(dx, dz) || 1;
+      return [dx / l, dz / l];
+    });
+    const ANEIS = [[0, 0], [0.09, 0.03], [0.2, 0.12], [0.29, 0.26], [0.33, 0.42], [0.28, 0.56], [0.16, 0.66]]; // [saliência, descida] em metros
+    const nA = ANEIS.length, sp = new Float32Array(nPer * nA * 3), su = new Float32Array(nPer * nA * 2), sc = new Float32Array(nPer * nA * 3);
+    for (let k = 0; k < nPer; k++) {
+      const s = k * passo;
+      const ruido = 0.5 + 0.5 * (0.5 * Math.sin(s * 1.3 + 0.7) + 0.3 * Math.sin(s * 3.9 + 2.0) + 0.2 * Math.sin(s * 8.7));
+      for (let a = 0; a < nA; a++) {
+        const [o, dr] = ANEIS[a], f = a / (nA - 1);
+        const x = per[k][0] + dirs[k][0] * o * (0.8 + 0.4 * ruido), z = per[k][1] + dirs[k][1] * o * (0.8 + 0.4 * ruido);
+        const idx = k * nA + a;
+        sp.set([x, terrainH(per[k][0], per[k][1]) - dr * (0.75 + 0.5 * ruido), z], idx * 3);
+        su.set([x / LW + 0.5, 0.5 - z / LD], idx * 2);
+        const t = suave(0.15, 1, f); // verde até o início da dobra, terra no fim
+        sc.set([1 - 0.62 * t, 1 - 0.7 * t, 1 - 0.78 * t], idx * 3);
+      }
+    }
+    const si = [];
+    for (let k = 0; k < nPer; k++) for (let a = 0; a < nA - 1; a++) {
+      const k2 = (k + 1) % nPer, p0 = k * nA + a, p1 = k2 * nA + a;
+      si.push(p0, p0 + 1, p1, p1, p0 + 1, p1 + 1);
+    }
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    sg.setAttribute('uv', new THREE.BufferAttribute(su, 2));
+    sg.setAttribute('color', new THREE.BufferAttribute(sc, 3));
+    sg.setIndex(si);
+    sg.computeVertexNormals();
+    if (sg.attributes.normal.getY(0) < 0) { // enrolamento invertido: troca a ordem dos triângulos
+      for (let i = 0; i < si.length; i += 3) { const t = si[i + 1]; si[i + 1] = si[i + 2]; si[i + 2] = t; }
+      sg.setIndex(si);
+      sg.computeVertexNormals();
+    }
+    root.add(shadowed(new THREE.Mesh(sg, matMalha), false, true));
   }
   slabWithHole(LW - 0.35, 1.6, LD - 0.35, poolHole, M.soil, -0.4, 0.12);
   M.soil.map.repeat.set(5, 1);
@@ -1523,10 +1582,10 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
       carWheels.push(...pivos);
       S.atualizaSombra = 3; // sombra nova com o modelo (main.js atualiza enquanto S.moving)
       // crédito do modelo (licenças CC-BY pedem atribuição): vem do próprio arquivo (asset.extras do Sketchfab)
-      const ex = gltf.asset?.extras || {};
-      S.creditoCarro = ex.title ? { titulo: ex.title, autor: String(ex.author || '').replace(/\s*\(.*\)$/, ''), licenca: String(ex.license || '').replace(/\s*\(.*\)$/, ''), fonte: ex.source || '' } : null;
-      console.log(`[casa3d] modelo do carro: ${nome} (${pivos.length} rodas)${S.creditoCarro ? ` — ${S.creditoCarro.titulo} por ${S.creditoCarro.autor}, ${S.creditoCarro.licenca}` : ''}`);
-      onCreditoCarro?.(S.creditoCarro);
+      // const ex = gltf.asset?.extras || {};
+      // S.creditoCarro = ex.title ? { titulo: ex.title, autor: String(ex.author || '').replace(/\s*\(.*\)$/, ''), licenca: String(ex.license || '').replace(/\s*\(.*\)$/, ''), fonte: ex.source || '' } : null;
+      // console.log(`[casa3d] modelo do carro: ${nome} (${pivos.length} rodas)${S.creditoCarro ? ` — ${S.creditoCarro.titulo} por ${S.creditoCarro.autor}, ${S.creditoCarro.licenca}` : ''}`);
+      // onCreditoCarro?.(S.creditoCarro);
     }, undefined, (e) => console.warn(`[casa3d] modelo do carro não carregou, usando o gerado: ${e.message || e}`));
   }
 
@@ -1717,9 +1776,9 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   // Sem textura com recorte alfa (antes eram cartões PNG altos e espalhados que destoavam da casa).
   {
     const laminas = [];
-    for (let i = 0; i < 5; i++) {
-      const a = (i / 5) * Math.PI * 2 + i * 0.7, d = 0.02 + (i % 2) * 0.025;
-      const x = Math.cos(a) * d, z = Math.sin(a) * d, h = 0.1 + ((i * 37) % 7) / 100;
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2 + i * 0.7, d = 0.02 + (i % 3) * 0.02;
+      const x = Math.cos(a) * d, z = Math.sin(a) * d, h = 0.09 + ((i * 37) % 7) / 100; // V8: 9 a 15 cm (estava alto demais)
       const lx = Math.cos(a) * 0.035, lz = Math.sin(a) * 0.035, w = 0.014;
       const px = -Math.sin(a) * w, pz = Math.cos(a) * w;
       laminas.push(x - px, 0, z - pz, x + px, 0, z + pz, x + lx, h, z + lz);
@@ -1727,7 +1786,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(laminas, 3));
     const nrm = [], cor = [];
-    const baixo = new THREE.Color(0x2f4f1f), ponta = new THREE.Color(0x7aa448);
+    const baixo = new THREE.Color(0x2f4f1f), ponta = new THREE.Color(0x6a9440);
     for (let i = 0; i < laminas.length / 9; i++) {
       for (let k = 0; k < 3; k++) {
         nrm.push(0, 1, 0); // sombreia como o gramado
@@ -1738,13 +1797,25 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(cor, 3));
     const grassMat = std({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.95 });
+    // V8: vento — a ponta de cada lâmina balança (quanto mais alto o vértice, mais desloca); fase pela posição do tufo
+    grassMat.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = ventoU;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uTime;')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          float hv = position.y;
+          float fv = instanceMatrix[3].x * 0.45 + instanceMatrix[3].z * 0.31;
+          float rajada = 0.65 + 0.35 * sin(uTime * 0.35 + instanceMatrix[3].x * 0.08);
+          float bal = (sin(uTime * 1.7 + fv) * 0.6 + sin(uTime * 2.9 + fv * 1.7) * 0.4) * hv * hv * 0.9 * rajada;
+          transformed.x += bal; transformed.z += bal * 0.5;`);
+    };
     const blocked = [[-9.4, -7.1, 7.7, 10.1], [-6.8, 8.9, -4.2, 4.2], [-7.1, 2.0, 3.8, 6.9], [-7.0, -0.1, 7.1, 12], [2.1, 3.9, 3.8, 12], [6.1, GAR_X1 + 0.2, -4, 12]];
     const ok = (x, z) => !blocked.some(([a, b, c, d]) => x > a && x < b && z > c && z < d);
     const pts = [];
     let seed = 7;
     const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    while (pts.length < (hi ? 9000 : quality === 'medium' ? 5000 : 2500)) {
-      const x = (r() - 0.5) * (LW - 1.2), z = (r() - 0.5) * (LD - 1.2);
+    while (pts.length < (hi ? 9000 : quality === 'medium' ? 5000 : 4500)) { // V8: menos, os modelos reais completam
+      const x = (r() - 0.5) * (LW - 0.45), z = (r() - 0.5) * (LD - 0.45);
       if (ok(x, z)) pts.push([x, z]);
     }
     const inst = new THREE.InstancedMesh(geo, grassMat, pts.length);
@@ -1752,12 +1823,132 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     const c = new THREE.Color(), q = new THREE.Quaternion(), e = new THREE.Euler();
     pts.forEach(([x, z], i) => {
       const s = 0.7 + r() * 0.6;
-      q.setFromEuler(e.set((r() - 0.5) * 0.2, r() * 6, (r() - 0.5) * 0.2));
-      inst.setMatrixAt(i, new THREE.Matrix4().compose(new THREE.Vector3(x, terrainH(x, z), z), q, new THREE.Vector3(s, s * (0.8 + r() * 0.5), s)));
-      const k = 0.8 + r() * 0.3, seca = r() < 0.12 ? 0.12 : 0; // algumas touceiras mais secas, como as manchas do chão
+      q.setFromEuler(e.set((r() - 0.5) * 0.3, r() * 6, (r() - 0.5) * 0.2));
+      inst.setMatrixAt(i, new THREE.Matrix4().compose(new THREE.Vector3(x, terrainH(x, z), z), q, new THREE.Vector3(s, s * (0.6 + r() * 0.3), s)));
+      const k = 0.72 + r() * 0.26, seca = r() < 0.12 ? 0.12 : 0; // algumas touceiras mais secas, como as manchas do chão
       inst.setColorAt(i, c.setRGB(k + seca, k + seca * 0.4, k * 0.9));
     });
     root.add(inst);
+  }
+  // V8: grama de verdade por cima do chão (modelos em public/modelos/natureza/, extraídos e otimizados de docs/modelos-ground):
+  // touceiras.glb = variantes do Grass.glb (grama, margaridas, grama seca; os trevos ficaram de fora: haste sem cor), circulos.glb = 4 círculos de grama
+  // (grass_patches; o trecho escaneado saiu: virava uma placa clara). Cada variante vira um InstancedMesh (uma chamada por material),
+  // espalhado em manchas sobre terrainH, com vento no shader. Carrega depois da cena (assíncrono); perfil leve fica sem.
+  if (quality !== 'low') {
+    const FATOR = hi ? 1 : 0.4;
+    const BLQ = [[-9.4, -7.1, 7.7, 10.1], [-6.8, 8.9, -4.2, 4.2], [-7.1, 2.0, 3.8, 6.9], [-7.0, -0.1, 7.1, 12], [2.1, 3.9, 3.8, 12], [6.1, GAR_X1 + 0.2, -4, 12]];
+    const livre = (x, z) => Math.abs(x) < LW / 2 - 0.45 && Math.abs(z) < LD / 2 - 0.45 && !BLQ.some(([a, b, c, d]) => x > a - 0.15 && x < b + 0.15 && z > c - 0.15 && z < d + 0.15);
+    let semente = 913;
+    const rr = () => ((semente = (semente * 16807) % 2147483647) / 2147483647);
+    // pontos em manchas: centros sorteados e pontos espalhados em volta (mais perto do centro), nunca em área construída
+    function manchas(n, raio) {
+      const pts = [];
+      let tent = 0, cx = 0, cz = 0;
+      while (pts.length < n && tent++ < n * 40) {
+        if (pts.length % 9 === 0 || !livre(cx, cz)) { cx = (rr() - 0.5) * (LW - 1); cz = (rr() - 0.5) * (LD - 1); }
+        const a = rr() * Math.PI * 2, d = raio * Math.sqrt(rr()) * (0.3 + rr() * 0.7);
+        const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+        if (livre(x, z)) pts.push([x, z]);
+      }
+      return pts;
+    }
+    // atributos quantizados (meshopt) viram float antes de transformar (como no carro)
+    function paraFloat(g) {
+      for (const k of Object.keys(g.attributes)) {
+        const at = g.attributes[k];
+        if (at.array instanceof Float32Array && !at.isInterleavedBufferAttribute) continue;
+        const f = new Float32Array(at.count * at.itemSize);
+        for (let i = 0; i < at.count; i++) for (let j = 0; j < at.itemSize; j++) f[i * at.itemSize + j] = at.getComponent(i, j);
+        g.setAttribute(k, new THREE.BufferAttribute(f, at.itemSize));
+      }
+      return g;
+    }
+    // vento: desloca o vértice conforme a altura (no espaço da variante), fase pela posição da instância
+    function vento(mat, amp) {
+      mat.onBeforeCompile = (sh) => {
+        sh.uniforms.uTime = ventoU;
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nuniform float uTime;')
+          .replace('#include <begin_vertex>', `#include <begin_vertex>
+            #ifdef USE_INSTANCING
+            float fv = instanceMatrix[3].x * 0.45 + instanceMatrix[3].z * 0.31;
+            #else
+            float fv = position.x * 0.45 + position.z * 0.31;
+            #endif
+            float hv = max(position.y, 0.0);
+            float bal = (sin(uTime * 1.6 + fv) * 0.6 + sin(uTime * 2.7 + fv * 1.7) * 0.4) * hv * ${amp.toFixed(3)};
+            transformed.x += bal; transformed.z += bal * 0.5;`);
+      };
+    }
+    // uma variante (nó do glb) → lista de { geo, mat } no espaço da variante, base em y = 0 e centrada em x/z
+    function partes(no, zParaCima) {
+      no.updateMatrixWorld(true);
+      const inv = no.matrixWorld.clone().invert(), lista = [];
+      no.traverse((o) => {
+        if (!o.isMesh) return;
+        const g = paraFloat(o.geometry.clone()).applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
+        if (zParaCima) g.rotateX(-Math.PI / 2);
+        const mat = o.material.clone();
+        if (mat.transparent || mat.alphaTest > 0 || mat.map?.format === THREE.RGBAFormat) { mat.transparent = false; mat.alphaTest = 0.45; }
+        mat.side = THREE.DoubleSide;
+        if (/stem/i.test(mat.name) && !mat.map) mat.color.set(0x4d6a2a); // haste sem textura vinha branca
+        lista.push({ geo: g, mat });
+      });
+      const caixa = new THREE.Box3();
+      for (const p of lista) { p.geo.computeBoundingBox(); caixa.union(p.geo.boundingBox); }
+      const cen = caixa.getCenter(new THREE.Vector3());
+      for (const p of lista) p.geo.translate(-cen.x, -caixa.min.y, -cen.z);
+      return { lista, tam: caixa.getSize(new THREE.Vector3()) };
+    }
+    function instanciar({ lista }, pts, escala, amp, giroX = 0.12) {
+      if (!pts.length) return 0;
+      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), s = new THREE.Vector3();
+      const mats = pts.map(([x, z]) => {
+        const k = escala[0] + rr() * (escala[1] - escala[0]);
+        q.setFromEuler(e.set((rr() - 0.5) * giroX, rr() * Math.PI * 2, (rr() - 0.5) * giroX));
+        return m4.clone().compose(v.set(x, terrainH(x, z) - 0.01, z), q, s.set(k, k * (0.85 + rr() * 0.3), k));
+      });
+      let tri = 0;
+      for (const { geo, mat } of lista) {
+        vento(mat, amp);
+        const im = new THREE.InstancedMesh(geo, mat, pts.length);
+        mats.forEach((m, i) => im.setMatrixAt(i, m));
+        im.castShadow = hi; im.receiveShadow = true;
+        im.computeBoundingSphere();
+        root.add(im);
+        tri += (geo.index ? geo.index.count : geo.attributes.position.count) / 3 * pts.length;
+      }
+      return tri;
+    }
+    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    const carregar = (arq) => new Promise((ok) => loader.load(`/modelos/natureza/${arq}`, ok, undefined, (err) => { console.warn('V8: sem', arq, err); ok(null); }));
+    Promise.all(['touceiras.glb', 'circulos.glb'].map(carregar)).then(([tou, cir]) => {
+      let tri = 0;
+      if (tou) {
+        // [nome da variante, quantidade no perfil alto, raio da mancha, escala, vento]
+        const TOU = [
+          ['sc_grass_duo_02_high.002', 160, 1.6, [1.0, 1.6], 0.5], ['sc_grass_02_high.002', 150, 1.6, [0.9, 1.4], 0.5],
+          ['sc_grass_clump_03_high', 70, 1.3, [0.9, 1.4], 0.45], ['sc_grass_wild_clump_02_high.002', 55, 1.4, [0.8, 1.3], 0.4],
+          ['sc_grass_dry_01_high', 30, 1.2, [0.8, 1.2], 0.4], ['sc_grass_clump_02_high.002', 22, 1.0, [1.0, 1.5], 0.45],
+          ['sc_daisies_high', 26, 0.9, [1.0, 1.4], 0.3],
+        ];
+        for (const [nome, n, raio, esc, amp] of TOU) {
+          const no = tou.scene.getObjectByName(nome);
+          if (no) tri += instanciar(partes(no, false), manchas(Math.round(n * FATOR), raio), esc, amp);
+        }
+      }
+      if (cir) {
+        // círculos de grama alta (1,6 m no original): reduzidos para ~15 cm de altura, poucos, perto das bordas e das árvores
+        cir.scene.children.forEach((no, i) => {
+          const p = partes(no, true), k = 0.15 / p.tam.y;
+          const pts = ARVORES.filter((_, j) => j % 4 === i).map(([x, z]) => [x + 0.9, z + 0.6]).filter(([x, z]) => livre(x, z));
+          pts.push(...manchas(Math.round(3 * FATOR) || 1, 2.5));
+          tri += instanciar(p, pts, [k * 0.8, k * 1.2], 0.35 / k, 0.05);
+        });
+      }
+      stats.natureza = Math.round(tri);
+      S.atualizaSombra = 2; // sombra do sol sob demanda: refaz com a grama nova
+    });
   }
   // pedras decorativas
   for (const [x, z, s] of [[-0.2, 7.3, 0.35], [0.2, 7.6, 0.22], [-7.3, 10.8, 0.4], [-6.9, 11.2, 0.25], [10.9, 11.0, 0.3]]) {
@@ -2114,6 +2305,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     // cáusticas: sol de dia; à noite só com a luz externa (luminária da piscina)
     causticMat.uniforms.uOpacity.value = 0.35 * (1 - S.night) + Z.externa * S.night * 0.7;
     causticMat.uniforms.uTime.value = t;
+    ventoU.value = t;
     M.poolLight.emissiveIntensity = Z.externa * (0.3 + S.night * 0.3); // antes 2,8: virava uma estrela na água
     // relógio da TV: redesenha ao virar o minuto, mesmo sem estado novo
     if (Math.floor(Date.now() / 60000) !== tvMinute) drawTV();
