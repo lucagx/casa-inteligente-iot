@@ -462,17 +462,22 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
   // repetiria visivelmente pelo terreno todo, então o gramado procedural (4,6 m por repetição) multiplica a cor da foto
   // em manchas grandes; o tom é puxado para um verde mais fundo. Perfil leve: só a cor.
   // V8: chão de grama fotográfico com relevo (Grass002: grama, trevo e folhas; cor, normal, AO e rugosidade; 2 m por repetição)
-  const fotoSolo = TX.photoMaps('grass002', { repeat: [LW / 2.0, LD / 2.0], leve: quality === 'low', ao: true });
-  const matSolo = std({ ...fotoSolo, color: 0xe6e6e6, roughness: 1 });
+  // Com o prado (perfis alto e médio) o chão é a terra do próprio pacote de grama (Dirt_Ground), como nas imagens de referência.
+  const fotoSolo = TX.photoMaps(quality === 'low' ? 'grass002' : 'dirt_ground', { repeat: [LW / 2.0, LD / 2.0], leve: quality === 'low', ao: true });
+  const matSolo = std({ ...fotoSolo, color: quality === 'low' ? 0xe6e6e6 : 0x7d6f58, roughness: 1 }); // terra escurecida entre as touceiras
   if (matSolo.normalMap) matSolo.normalScale.set(1.1, 1.1); // relevo da foto (1,6 ficava áspero demais)
   {
     const macro = M.grass.map, rep = macro.repeat.clone(), rf = fotoSolo.map.repeat.clone();
+    // V8: verde sobre a terra — a foto da Grass002 entra em manchas grandes (pelo desenho do gramado procedural),
+    // assim a terra aparece só entre as touceiras e o chão não fica marrom
+    const fotoVerde = quality === 'low' ? null : TX.photoMaps('grass002', { repeat: [LW / 2.0, LD / 2.0], leve: true }).map;
     matSolo.onBeforeCompile = (sh) => {
       sh.uniforms.tMacro = { value: macro };
       sh.uniforms.uMacroRep = { value: rep };
       sh.uniforms.uFotoRep = { value: rf };
+      sh.uniforms.tVerde = { value: fotoVerde };
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform sampler2D tMacro; uniform vec2 uMacroRep; uniform vec2 uFotoRep;')
+        .replace('#include <common>', '#include <common>\nuniform sampler2D tMacro; uniform vec2 uMacroRep; uniform vec2 uFotoRep;' + (fotoVerde ? '\n#define COM_VERDE\nuniform sampler2D tVerde;' : ''))
         .replace('#include <map_fragment>', `#include <map_fragment>
           #ifdef USE_MAP
           // V8: a foto sozinha fica "carregada" de longe. Mistura uma segunda escala (quebra a repetição) e, com a
@@ -483,6 +488,11 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
           diffuseColor.rgb = mix(diffuseColor.rgb, cor2, 0.35);
           diffuseColor.rgb = mix(diffuseColor.rgb, mix(corBorr, cor2, 0.3), longe * 0.75);
           vec3 macroCor = texture2D(tMacro, (vMapUv / uFotoRep) * uMacroRep).rgb;
+          #ifdef COM_VERDE
+          float mVerde = 0.6 + 0.3 * smoothstep(0.3, 0.6, dot(macroCor, vec3(0.3, 0.59, 0.11)) * 2.0);
+          vec3 verde = texture2D(tVerde, vMapUv * 0.9, longe * 3.0).rgb * vec3(0.78, 0.82, 0.7);
+          diffuseColor.rgb = mix(diffuseColor.rgb, verde, mVerde);
+          #endif
           diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * clamp(macroCor * 2.0, 0.4, 1.6), 0.8);
           #endif`);
     };
@@ -1772,70 +1782,12 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     shadowed(iFolha, true, true);
     root.add(iFolha, iCaule, iPet, iMiolo);
   }
-  // V1: tufos de grama — 5 lâminas 3D finas e baixas (até ~16 cm), da cor do gramado: base escura, ponta clara.
-  // Sem textura com recorte alfa (antes eram cartões PNG altos e espalhados que destoavam da casa).
-  {
-    const laminas = [];
-    for (let i = 0; i < 7; i++) {
-      const a = (i / 7) * Math.PI * 2 + i * 0.7, d = 0.02 + (i % 3) * 0.02;
-      const x = Math.cos(a) * d, z = Math.sin(a) * d, h = 0.09 + ((i * 37) % 7) / 100; // V8: 9 a 15 cm (estava alto demais)
-      const lx = Math.cos(a) * 0.035, lz = Math.sin(a) * 0.035, w = 0.014;
-      const px = -Math.sin(a) * w, pz = Math.cos(a) * w;
-      laminas.push(x - px, 0, z - pz, x + px, 0, z + pz, x + lx, h, z + lz);
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(laminas, 3));
-    const nrm = [], cor = [];
-    const baixo = new THREE.Color(0x2f4f1f), ponta = new THREE.Color(0x6a9440);
-    for (let i = 0; i < laminas.length / 9; i++) {
-      for (let k = 0; k < 3; k++) {
-        nrm.push(0, 1, 0); // sombreia como o gramado
-        const c = k === 2 ? ponta : baixo;
-        cor.push(c.r, c.g, c.b);
-      }
-    }
-    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
-    geo.setAttribute('color', new THREE.Float32BufferAttribute(cor, 3));
-    const grassMat = std({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.95 });
-    // V8: vento — a ponta de cada lâmina balança (quanto mais alto o vértice, mais desloca); fase pela posição do tufo
-    grassMat.onBeforeCompile = (sh) => {
-      sh.uniforms.uTime = ventoU;
-      sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform float uTime;')
-        .replace('#include <begin_vertex>', `#include <begin_vertex>
-          float hv = position.y;
-          float fv = instanceMatrix[3].x * 0.45 + instanceMatrix[3].z * 0.31;
-          float rajada = 0.65 + 0.35 * sin(uTime * 0.35 + instanceMatrix[3].x * 0.08);
-          float bal = (sin(uTime * 1.7 + fv) * 0.6 + sin(uTime * 2.9 + fv * 1.7) * 0.4) * hv * hv * 0.9 * rajada;
-          transformed.x += bal; transformed.z += bal * 0.5;`);
-    };
-    const blocked = [[-9.4, -7.1, 7.7, 10.1], [-6.8, 8.9, -4.2, 4.2], [-7.1, 2.0, 3.8, 6.9], [-7.0, -0.1, 7.1, 12], [2.1, 3.9, 3.8, 12], [6.1, GAR_X1 + 0.2, -4, 12]];
-    const ok = (x, z) => !blocked.some(([a, b, c, d]) => x > a && x < b && z > c && z < d);
-    const pts = [];
-    let seed = 7;
-    const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    while (pts.length < (hi ? 9000 : quality === 'medium' ? 5000 : 4500)) { // V8: menos, os modelos reais completam
-      const x = (r() - 0.5) * (LW - 0.45), z = (r() - 0.5) * (LD - 0.45);
-      if (ok(x, z)) pts.push([x, z]);
-    }
-    const inst = new THREE.InstancedMesh(geo, grassMat, pts.length);
-    inst.receiveShadow = true;
-    const c = new THREE.Color(), q = new THREE.Quaternion(), e = new THREE.Euler();
-    pts.forEach(([x, z], i) => {
-      const s = 0.7 + r() * 0.6;
-      q.setFromEuler(e.set((r() - 0.5) * 0.3, r() * 6, (r() - 0.5) * 0.2));
-      inst.setMatrixAt(i, new THREE.Matrix4().compose(new THREE.Vector3(x, terrainH(x, z), z), q, new THREE.Vector3(s, s * (0.6 + r() * 0.3), s)));
-      const k = 0.72 + r() * 0.26, seca = r() < 0.12 ? 0.12 : 0; // algumas touceiras mais secas, como as manchas do chão
-      inst.setColorAt(i, c.setRGB(k + seca, k + seca * 0.4, k * 0.9));
-    });
-    root.add(inst);
-  }
   // V8: grama de verdade por cima do chão (modelos em public/modelos/natureza/, extraídos e otimizados de docs/modelos-ground):
-  // touceiras.glb = variantes do Grass.glb (grama, margaridas, grama seca; os trevos ficaram de fora: haste sem cor), circulos.glb = 4 círculos de grama
+  // prado.glb + prado.json = o prado de demonstração do Grass.glb (ver semear()), circulos.glb = 4 círculos de grama
   // (grass_patches; o trecho escaneado saiu: virava uma placa clara). Cada variante vira um InstancedMesh (uma chamada por material),
-  // espalhado em manchas sobre terrainH, com vento no shader. Carrega depois da cena (assíncrono); perfil leve fica sem.
-  if (quality !== 'low') {
-    const FATOR = hi ? 1 : 0.4;
+  // espalhado em manchas sobre terrainH, com vento no shader. Carrega depois da cena (assíncrono); perfil leve: menos instâncias e sem vento.
+  {
+    const leve = quality === 'low', FATOR = hi ? 1 : leve ? 0.25 : 0.5;
     const BLQ = [[-9.4, -7.1, 7.7, 10.1], [-6.8, 8.9, -4.2, 4.2], [-7.1, 2.0, 3.8, 6.9], [-7.0, -0.1, 7.1, 12], [2.1, 3.9, 3.8, 12], [6.1, GAR_X1 + 0.2, -4, 12]];
     const livre = (x, z) => Math.abs(x) < LW / 2 - 0.45 && Math.abs(z) < LD / 2 - 0.45 && !BLQ.some(([a, b, c, d]) => x > a - 0.15 && x < b + 0.15 && z > c - 0.15 && z < d + 0.15);
     let semente = 913;
@@ -1863,12 +1815,25 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
       }
       return g;
     }
-    // vento: desloca o vértice conforme a altura (no espaço da variante), fase pela posição da instância
+    // vento: desloca o vértice conforme a altura (no espaço da variante), fase pela posição da instância.
+    // Recorte: o que cair dentro das áreas construídas (BLQ) não é desenhado — folhas inclinadas não invadem
+    // caminho, garagem, piscina, deck nem casa (a borda fica como gramado aparado).
+    const uBloq = { value: BLQ.map(([a, b, c, d]) => new THREE.Vector4(a, b, c, d)) };
     function vento(mat, amp) {
+      if (leve) amp = 0; // perfil leve: grama parada
       mat.onBeforeCompile = (sh) => {
         sh.uniforms.uTime = ventoU;
+        sh.uniforms.uBloq = uBloq;
+        sh.fragmentShader = sh.fragmentShader
+          .replace('#include <common>', `#include <common>\nuniform vec4 uBloq[${BLQ.length}]; varying vec2 vChao;`)
+          .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+            for (int b = 0; b < ${BLQ.length}; b++) {
+              vec4 r = uBloq[b];
+              if (vChao.x > r.x && vChao.x < r.y && vChao.y > r.z && vChao.y < r.w) discard;
+            }
+            if (abs(vChao.x) > ${(LW / 2 - 0.25).toFixed(2)} || abs(vChao.y) > ${(LD / 2 - 0.25).toFixed(2)}) discard; // não cai sobre o corte da terra`);
         sh.vertexShader = sh.vertexShader
-          .replace('#include <common>', '#include <common>\nuniform float uTime;')
+          .replace('#include <common>', '#include <common>\nuniform float uTime; varying vec2 vChao;')
           .replace('#include <begin_vertex>', `#include <begin_vertex>
             #ifdef USE_INSTANCING
             float fv = instanceMatrix[3].x * 0.45 + instanceMatrix[3].z * 0.31;
@@ -1877,11 +1842,16 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
             #endif
             float hv = max(position.y, 0.0);
             float bal = (sin(uTime * 1.6 + fv) * 0.6 + sin(uTime * 2.7 + fv * 1.7) * 0.4) * hv * ${amp.toFixed(3)};
-            transformed.x += bal; transformed.z += bal * 0.5;`);
+            transformed.x += bal; transformed.z += bal * 0.5;
+            #ifdef USE_INSTANCING
+            vChao = (instanceMatrix * vec4(transformed, 1.0)).xz;
+            #else
+            vChao = transformed.xz;
+            #endif`);
       };
     }
     // uma variante (nó do glb) → lista de { geo, mat } no espaço da variante, base em y = 0 e centrada em x/z
-    function partes(no, zParaCima) {
+    function partes(no, zParaCima, manterOrigem = false) {
       no.updateMatrixWorld(true);
       const inv = no.matrixWorld.clone().invert(), lista = [];
       no.traverse((o) => {
@@ -1892,8 +1862,10 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
         if (mat.transparent || mat.alphaTest > 0 || mat.map?.format === THREE.RGBAFormat) { mat.transparent = false; mat.alphaTest = 0.45; }
         mat.side = THREE.DoubleSide;
         if (/stem/i.test(mat.name) && !mat.map) mat.color.set(0x4d6a2a); // haste sem textura vinha branca
+        if (/red flower/i.test(mat.name) && !mat.map) mat.color.set(0xb4305f); // flor do trevo (sem textura no pacote)
         lista.push({ geo: g, mat });
       });
+      if (manterOrigem) return { lista };
       const caixa = new THREE.Box3();
       for (const p of lista) { p.geo.computeBoundingBox(); caixa.union(p.geo.boundingBox); }
       const cen = caixa.getCenter(new THREE.Vector3());
@@ -1913,7 +1885,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
         vento(mat, amp);
         const im = new THREE.InstancedMesh(geo, mat, pts.length);
         mats.forEach((m, i) => im.setMatrixAt(i, m));
-        im.castShadow = hi; im.receiveShadow = true;
+        im.castShadow = false; im.receiveShadow = true; im.userData.semAO = true; // sem sombra e fora do GTAO: esses passes não têm o recorte do BLQ (deixavam riscos no caminho)
         im.computeBoundingSphere();
         root.add(im);
         tri += (geo.index ? geo.index.count : geo.attributes.position.count) / 3 * pts.length;
@@ -1922,22 +1894,64 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     }
     const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
     const carregar = (arq) => new Promise((ok) => loader.load(`/modelos/natureza/${arq}`, ok, undefined, (err) => { console.warn('V8: sem', arq, err); ok(null); }));
-    Promise.all(['touceiras.glb', 'circulos.glb'].map(carregar)).then(([tou, cir]) => {
+    // Prado do pacote: a cena de demonstração do Grass.glb (13 × 13 m, ~8.500 instâncias de 13 variantes) com a posição,
+    // o giro e a escala de cada instância (prado.json). É repetida como ladrilho pela ilha, 2,2× maior (escala da maquete),
+    // cada ladrilho girado 90°, pulando as áreas construídas. Para caber na placa de vídeo, cada variante mantém só parte
+    // das folhas (componentes soltos da malha) e parte das instâncias, conforme o perfil.
+    const RARO = { folhas: 1, inst: hi ? 0.75 : leve ? 0.4 : 0.55 };
+    const POUCO = { 'sc_wasteland_gravel_01_high.001': 0.35, 'sc_leaves_01_high': 0, 'sc_clovers_01_high': 0, 'sc_dandelion_01_high': 0 }; // cascalho escondido sob a grama; folhas secas viravam lascas; trevo sem flor: pesado e escuro; dente-de-leão: folhas enormes ampliado
+    // mantém uma fração dos pedaços soltos (cada folha/lâmina é um componente ligado da malha)
+    function rarear(g, frac) {
+      if (frac >= 1 || !g.index) return g;
+      const idx = g.index.array, n = g.attributes.position.count, pai = new Int32Array(n).map((_, i) => i);
+      const raiz = (i) => { while (pai[i] !== i) { pai[i] = pai[pai[i]]; i = pai[i]; } return i; };
+      for (let t = 0; t < idx.length; t += 3) { const a = raiz(idx[t]), b = raiz(idx[t + 1]), c = raiz(idx[t + 2]); pai[b] = a; pai[raiz(c)] = a; }
+      const fica = [];
+      for (let t = 0; t < idx.length; t += 3) { const h = Math.sin(raiz(idx[t]) * 12.9898) * 43758.5453; if (h - Math.floor(h) < frac) fica.push(idx[t], idx[t + 1], idx[t + 2]); }
+      g.setIndex(fica);
+      return g;
+    }
+    function semear(prado, layout) {
+      const ESC = 2.2, TW = layout.tamanho[0] * ESC, TD = layout.tamanho[1] * ESC;
+      const nx = Math.ceil(LW / TW), nz = Math.ceil(LD / TD);
+      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), qt = new THREE.Quaternion(), v = new THREE.Vector3(), s = new THREE.Vector3(), eixoY = new THREE.Vector3(0, 1, 0);
       let tri = 0;
-      if (tou) {
-        // [nome da variante, quantidade no perfil alto, raio da mancha, escala, vento]
-        const TOU = [
-          ['sc_grass_duo_02_high.002', 160, 1.6, [1.0, 1.6], 0.5], ['sc_grass_02_high.002', 150, 1.6, [0.9, 1.4], 0.5],
-          ['sc_grass_clump_03_high', 70, 1.3, [0.9, 1.4], 0.45], ['sc_grass_wild_clump_02_high.002', 55, 1.4, [0.8, 1.3], 0.4],
-          ['sc_grass_dry_01_high', 30, 1.2, [0.8, 1.2], 0.4], ['sc_grass_clump_02_high.002', 22, 1.0, [1.0, 1.5], 0.45],
-          ['sc_daisies_high', 26, 0.9, [1.0, 1.4], 0.3],
-        ];
-        for (const [nome, n, raio, esc, amp] of TOU) {
-          const no = tou.scene.getObjectByName(nome);
-          if (no) tri += instanciar(partes(no, false), manchas(Math.round(n * FATOR), raio), esc, amp);
+      for (const [nome, lista] of Object.entries(layout.instancias)) {
+        const no = prado.scene.getObjectByName(nome);
+        if (!no) continue;
+        const frac = RARO.inst * (POUCO[nome] ?? 1);
+        const mats = [];
+        for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
+          const cx = -LW / 2 + TW / 2 + i * TW, cz = -LD / 2 + TD / 2 + j * TD, giro = ((i * 3 + j) % 4) * Math.PI / 2;
+          const cs = Math.cos(giro), sn = Math.sin(giro);
+          qt.setFromAxisAngle(eixoY, giro);
+          for (const [x, , z, ax, ay, az, aw, sx, sy, sz] of lista) {
+            if (rr() > frac) continue;
+            const px = cx + (x * cs + z * sn) * ESC, pz = cz + (-x * sn + z * cs) * ESC;
+            if (!livre(px, pz)) continue;
+            q.set(ax, ay, az, aw).premultiply(qt);
+            mats.push(m4.clone().compose(v.set(px, terrainH(px, pz) - 0.005, pz), q, s.set(sx * ESC, sy * ESC, sz * ESC)));
+          }
+        }
+        if (!mats.length) continue;
+        for (const { geo, mat } of partes(no, false, true).lista) {
+          rarear(geo, /gravel|leaves/.test(nome) ? 1 : RARO.folhas);
+          vento(mat, /gravel|leaves|branches/.test(nome) ? 0 : 0.5);
+          const im = new THREE.InstancedMesh(geo, mat, mats.length);
+          mats.forEach((m, k) => im.setMatrixAt(k, m));
+          im.castShadow = false; im.receiveShadow = true; im.userData.semAO = true; // sem sombra própria (pesa demais) e fora do GTAO (o passe dele não tem o recorte do BLQ)
+          im.computeBoundingSphere();
+          root.add(im);
+          tri += geo.index.count / 3 * mats.length;
         }
       }
-      if (cir) {
+      return tri;
+    }
+    const lerLayout = fetch('/modelos/natureza/prado.json').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    Promise.all([carregar('prado.glb'), lerLayout, carregar('circulos.glb')]).then(([prado, layout, cir]) => {
+      let tri = 0;
+      if (prado && layout) tri += semear(prado, layout);
+      if (cir && !leve) {
         // círculos de grama alta (1,6 m no original): reduzidos para ~15 cm de altura, poucos, perto das bordas e das árvores
         cir.scene.children.forEach((no, i) => {
           const p = partes(no, true), k = 0.15 / p.tam.y;
