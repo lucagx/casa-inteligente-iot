@@ -1693,7 +1693,9 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     trees.push({ crown, phase: seed * 1.7 });
   }
   const ARVORES = [[-12.2, -7.0, 1.15], [-13.0, 2.8, 0.95], [12.6, -8.2, 1.2], [14.0, -2.5, 1.0], [-11.6, 9.6, 0.85], [5.0, -9.9, 0.95], [-2.0, -9.6, 1.05], [14.2, 9.6, 0.7]];
-  ARVORES.forEach(([x, z, s], i) => tree(x, z, s, i + 1));
+  // V8: as 8 árvores são modelos reais (mix aprovado no viveiro): [modelo, altura em m]. Árvore gerada só se o modelo faltar.
+  const ARV_REAIS = [['ilha_a', 6.0], ['bordo', 6.0], ['carvalhao_1', 7.0], ['ilha_b', 5.0], ['bordo', 5.4], ['ilha_a', 5.4],
+    ['ilha_b', 5.5], ['bordo', 5.2]];
   // V2: spot de chão em cada árvore — luminária no pé e círculo de luz (o halo da copa saiu: com a copa de galhos
   // ele ficava em volta do tronco)
   {
@@ -1701,85 +1703,13 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     glowBatch(poolTex, 0xffc27a, ARVORES.map(([x, z, s]) => ({ w: 1.8 * s, h: 1.8 * s, x: x + 0.2, y: 0.015 + terrainH(x + 0.2, z + 0.2), z: z + 0.2, chao: true })), 0.45);
   }
 
-  // sebes e arbustos: arbustos de verdade (hastes + folhas), uma malha de casca e um InstancedMesh para todos
-  {
-    const spots = [];
-    for (let x = -14; x <= 14; x += 0.9) spots.push([x, -10.9, 0.62 + Math.sin(x * 1.3) * 0.12]);
-    for (let z = -9; z <= 7; z += 0.95) spots.push([-14.8, z, 0.6 + Math.cos(z) * 0.1]);
-    for (const [x, z] of [[-7.3, 4.4], [-7.3, 6.8], [5.15, 5.0], [1.1, 7.75], [10.8, 3.6], [10.9, -1.2], [10.8, -3.4], [-7.6, -2.0], [-7.5, 0.5]]) spots.push([x, z, 0.5 + Math.abs((x * z) % 0.25)]);
-    let sd = 4242;
-    const rnd = () => ((sd = (sd * 16807) % 2147483647) / 2147483647);
-    const todos = spots.map(([x, z, S]) => arbusto(x, terrainH(x, z), z, S * 1.5, rnd));
-    root.add(shadowed(new THREE.Mesh(mergeGeometries(todos.flatMap((a) => a.casca)), M.bark), false, true));
-    const por = Math.max(5, Math.round(14 * densidade));
-    const total = todos.reduce((n, a) => n + a.cachos.length * por, 0);
-    const inst = shadowed(new THREE.InstancedMesh(cardGeo, sprigMats[2], total), true, true);
-    let k = 0;
-    spots.forEach(([, , S], i) => { k = folhas(inst, k, todos[i].cachos, por, 0.3 * S * 1.5, rnd, 0.75, 0.72); });
-    root.add(inst);
-  }
-  // V1: canteiros com flores de verdade — touceira de folhas compridas, caules finos e flores de 5 pétalas com miolo.
-  // 4 malhas instanciadas no total (folhas, caules, pétalas, miolos), coloridas por instância.
-  {
-    const beds = [[4.4, 6.0, 3.95, 4.7], [-7.7, -6.85, 3.8, 7.2], [0.5, 1.7, 7.3, 7.95]]; // fora do deck (x -6,6..1,8 · z 3,9..6,8)
-    const cores = [0xf2c14e, 0xe86a7a, 0xf4f1ea, 0xb07fd1, 0xf29d52, 0xd94f6b];
-    let seed = 1;
-    const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    const plantas = [];
-    for (const [x0, x1, z0, z1] of beds) {
-      const n = Math.round(((x1 - x0) * (z1 - z0)) / 0.09);
-      for (let i = 0; i < n; i++) plantas.push([x0 + r() * (x1 - x0), z0 + r() * (z1 - z0), 1.4 + r() * 0.6, r()]);
-    }
-    // folha comprida (lâmina larga dobrada no meio), 6 por touceira
-    const folha = (() => {
-      const pts = [];
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2 + i, cs = Math.cos(a), sn = Math.sin(a), w = 0.018, h = 0.13 + (i % 3) * 0.03, l = 0.07;
-        // dois triângulos: base larga → ponta inclinada para fora
-        pts.push(-sn * w, 0, cs * w, sn * w, 0, -cs * w, cs * l, h, sn * l);
-        pts.push(-sn * w, 0, cs * w, cs * l * 0.5, h * 0.55, sn * l * 0.5 + 0.004, cs * l, h, sn * l);
-      }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
-      g.computeVertexNormals();
-      return g;
-    })();
-    const caule = new THREE.CylinderGeometry(0.003, 0.004, 1, 4).translate(0, 0.5, 0);
-    const petalas = (() => {
-      const gs = [];
-      for (let i = 0; i < 5; i++) {
-        const pg = new THREE.CircleGeometry(0.022, 8).scale(0.55, 1, 1).translate(0, 0.02, 0);
-        pg.rotateX(-Math.PI / 2 + 0.45);       // abre para cima, levemente em taça
-        pg.rotateY((i / 5) * Math.PI * 2);
-        gs.push(pg);
-      }
-      return mergeGeometries(gs);
-    })();
-    const verde = std({ color: 0x3d6a2c, roughness: 0.8, side: THREE.DoubleSide });
-    const iFolha = new THREE.InstancedMesh(folha, verde, plantas.length);
-    const iCaule = new THREE.InstancedMesh(caule, std({ color: 0x4c7a33, roughness: 0.8 }), plantas.length * 3);
-    const iPet = new THREE.InstancedMesh(petalas, std({ color: 0xffffff, roughness: 0.55, side: THREE.DoubleSide }), plantas.length * 3);
-    const iMiolo = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.008, 0), std({ color: 0xe0a92a, roughness: 0.7 }), plantas.length * 3);
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), c = new THREE.Color(), v = new THREE.Vector3(), um = new THREE.Vector3(1, 1, 1);
-    plantas.forEach(([x, z, s, k], i) => {
-      iFolha.setMatrixAt(i, m.compose(v.set(x, 0, z), q.setFromEuler(e.set(0, k * 6, 0)), new THREE.Vector3(s, s, s)));
-      iFolha.setColorAt(i, c.setRGB(0.85 + k * 0.25, 0.9 + k * 0.2, 0.85));
-      const cor = cores[Math.floor(k * 997) % cores.length];
-      for (let j = 0; j < 3; j++) {
-        const a = k * 6 + (j / 3) * Math.PI * 2, d = 0.03 * s, h = (0.17 + ((j * 7 + i) % 5) * 0.025) * s;
-        const fx = x + Math.cos(a) * d, fz = z + Math.sin(a) * d;
-        q.setFromEuler(e.set(Math.sin(a) * 0.12, 0, -Math.cos(a) * 0.12));
-        iCaule.setMatrixAt(i * 3 + j, m.compose(v.set(fx, 0, fz), q, new THREE.Vector3(1, h, 1)));
-        const topo = new THREE.Vector3(0, h, 0).applyQuaternion(q).add(new THREE.Vector3(fx, 0, fz));
-        q.setFromEuler(e.set(Math.sin(a) * 0.25, a, -Math.cos(a) * 0.25));
-        iPet.setMatrixAt(i * 3 + j, m.compose(topo, q, um.clone().multiplyScalar(s)));
-        iPet.setColorAt(i * 3 + j, c.set(cor).multiplyScalar(0.9 + j * 0.06));
-        iMiolo.setMatrixAt(i * 3 + j, m.compose(topo.clone().add(new THREE.Vector3(0, 0.006, 0)), q.identity(), um.clone().multiplyScalar(s)));
-      }
-    });
-    shadowed(iFolha, true, true);
-    root.add(iFolha, iCaule, iPet, iMiolo);
-  }
+  // sebes e arbustos (V8: modelos reais do Poly Haven, colocados no bloco da natureza mais abaixo): [x, z, tamanho]
+  const SEBES = [], ARBUSTOS = [];
+  for (let x = -14; x <= 14; x += 1.15) SEBES.push([x, -10.9, 1.0 + Math.sin(x * 1.3) * 0.15]);
+  for (let z = -9; z <= 7; z += 1.2) SEBES.push([-14.8, z, 0.95 + Math.cos(z) * 0.12]);
+  for (const [x, z] of [[-7.3, 4.4], [-7.3, 6.8], [5.15, 5.0], [1.1, 7.75], [10.8, 3.6], [10.9, -1.2], [10.8, -3.4], [-7.6, -2.0], [-7.5, 0.5]]) ARBUSTOS.push([x, z, 0.7 + Math.abs((x * z) % 0.25)]);
+  // canteiros de flores (V8: flores reais do Poly Haven, no bloco da natureza): retângulos x0, x1, z0, z1
+  const CANTEIROS = [[4.4, 6.0, 3.95, 4.7], [-7.7, -6.85, 3.8, 7.2], [0.5, 1.7, 7.3, 7.95]]; // fora do deck (x -6,6..1,8 · z 3,9..6,8)
   // V8: grama de verdade por cima do chão (modelos em public/modelos/natureza/, extraídos e otimizados de docs/modelos-ground):
   // prado.glb + prado.json = o prado de demonstração do Grass.glb (ver semear()), circulos.glb = 4 círculos de grama
   // (grass_patches; o trecho escaneado saiu: virava uma placa clara). Cada variante vira um InstancedMesh (uma chamada por material),
@@ -1817,12 +1747,15 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
     // Recorte: o que cair dentro das áreas construídas (BLQ) não é desenhado — folhas inclinadas não invadem
     // caminho, garagem, piscina, deck nem casa (a borda fica como gramado aparado).
     const uBloq = { value: BLQ.map(([a, b, c, d]) => new THREE.Vector4(a, b, c, d)) };
-    function vento(mat, amp) {
+    function vento(mat, amp, recorta = true, ritmo = 1) {
       if (leve) amp = 0; // perfil leve: grama parada
+      // o three reaproveita o shader de materiais com o mesmo onBeforeCompile: sem esta chave, folhas e tronco da mesma
+      // árvore pegavam amplitudes diferentes (a folha "saía" do galho)
+      mat.customProgramCacheKey = () => `vento|${amp}|${recorta}|${ritmo}|${mat.userData.verde || 0}|${mat.userData.tronco ? 1 : 0}`;
       mat.onBeforeCompile = (sh) => {
         sh.uniforms.uTime = ventoU;
         sh.uniforms.uBloq = uBloq;
-        sh.fragmentShader = sh.fragmentShader
+        if (recorta) sh.fragmentShader = sh.fragmentShader
           .replace('#include <common>', `#include <common>\nuniform vec4 uBloq[${BLQ.length}]; varying vec2 vChao;`)
           .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
             for (int b = 0; b < ${BLQ.length}; b++) {
@@ -1830,6 +1763,16 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
               if (vChao.x > r.x && vChao.x < r.y && vChao.y > r.z && vChao.y < r.w) discard;
             }
             if (abs(vChao.x) > ${(LW / 2 - 0.25).toFixed(2)} || abs(vChao.y) > ${(LD / 2 - 0.25).toFixed(2)}) discard; // não cai sobre o corte da terra`);
+        // cores harmonizadas (aprovado no viveiro): todas as folhas no mesmo verde, perto do tom da grama, com o brilho
+        // aproximado entre os modelos; todos os troncos num só marrom (o desenho da casca fica só no claro/escuro)
+        const vv = mat.userData.verde || 0;
+        if (vv) sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+          float lumF = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+          float lumN = mix(lumF, 0.3, 0.45) * (0.8 + lumF / 0.3 * 0.2);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(lumN) * vec3(0.55, 1.12, 0.38), ${vv.toFixed(2)});`);
+        else if (mat.userData.tronco) sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+          float lumT = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+          diffuseColor.rgb = vec3(0.065 * (0.7 + 0.3 * clamp(lumT / 0.2, 0.0, 2.0))) * vec3(1.32, 1.0, 0.76);`);
         sh.vertexShader = sh.vertexShader
           .replace('#include <common>', '#include <common>\nuniform float uTime; varying vec2 vChao;')
           .replace('#include <begin_vertex>', `#include <begin_vertex>
@@ -1839,7 +1782,7 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
             float fv = position.x * 0.45 + position.z * 0.31;
             #endif
             float hv = max(position.y, 0.0);
-            float bal = (sin(uTime * 1.6 + fv) * 0.6 + sin(uTime * 2.7 + fv * 1.7) * 0.4) * hv * ${amp.toFixed(3)};
+            float bal = (sin(uTime * ${(1.6 * ritmo).toFixed(2)} + fv) * 0.6 + sin(uTime * ${(2.7 * ritmo).toFixed(2)} + fv * 1.7) * 0.4) * ${recorta ? "hv" : "hv * hv"} * ${amp.toFixed(4)};
             transformed.x += bal; transformed.z += bal * 0.5;
             #ifdef USE_INSTANCING
             vChao = (instanceMatrix * vec4(transformed, 1.0)).xz;
@@ -2048,6 +1991,141 @@ export function buildWorld(scene, { quality = 'high', sensores = { ldr: true, ga
         tri += geo.index.count / 3 * mats.length;
       }
       stats.pedras = Math.round(tri);
+      S.atualizaSombra = 2;
+    });
+
+    // V8: arbustos, flores e árvores reais (Poly Haven, CC0). Os arquivos trazem várias variantes enfileiradas numa malha
+    // só: os pedaços ligados que se tocam (caixas em x/z) formam uma variante. Cada variante vira um InstancedMesh.
+    function variantes(geo) {
+      const comps = separar(geo, 1).map((g) => { g.computeBoundingBox(); return g; });
+      const pai = comps.map((_, i) => i), raiz = (i) => (pai[i] === i ? i : (pai[i] = raiz(pai[i])));
+      for (let i = 0; i < comps.length; i++) for (let j = i + 1; j < comps.length; j++) {
+        const a = comps[i].boundingBox, b = comps[j].boundingBox, m = 0.03;
+        if (a.min.x - m < b.max.x && b.min.x - m < a.max.x && a.min.z - m < b.max.z && b.min.z - m < a.max.z) pai[raiz(j)] = raiz(i);
+      }
+      const grupos = new Map();
+      comps.forEach((g, i) => { const r = raiz(i); if (!grupos.has(r)) grupos.set(r, []); grupos.get(r).push(g); });
+      return [...grupos.values()].map((l) => mergeGeometries(l)).filter((g) => g && g.index.count > 300)
+        .map((g) => { g.computeBoundingBox(); return g; }).sort((a, b) => a.boundingBox.min.x - b.boundingBox.min.x);
+    }
+    // base em y = 0, centro em x/z, altura = 1 (a escala vira a altura em metros)
+    function emPe(g) {
+      g.computeBoundingBox();
+      const b = g.boundingBox, c = b.getCenter(new THREE.Vector3()), h = b.max.y - b.min.y || 1;
+      g.translate(-c.x, -b.min.y, -c.z); g.scale(1 / h, 1 / h, 1 / h); g.computeBoundingSphere();
+      return g;
+    }
+    // folhas = materiais com recorte alfa: ganham um verde mais vivo (0,45, aprovado no viveiro); troncos, galhos e flores não
+    function matPlanta(m) {
+      const mt = m.clone();
+      const folha = mt.transparent || mt.alphaTest > 0;
+      if (folha) { mt.transparent = false; mt.alphaTest = 0.5; mt.depthWrite = true; }
+      mt.side = THREE.DoubleSide;
+      if (folha && !/flower|periwinkle|gazania|ursinia/i.test(mt.name)) mt.userData.verde = 0.8;
+      return mt;
+    }
+    // várias árvores enfileiradas em x num arquivo só (pinheirinhos): pedaços ligados agrupados pelo centro em x
+    function separarEmX(malhas) {
+      const comps = [];
+      for (const { geo, mat } of malhas) for (const g of separar(geo, 1)) {
+        g.computeBoundingBox();
+        comps.push({ x: (g.boundingBox.min.x + g.boundingBox.max.x) / 2, g, mat });
+      }
+      comps.sort((a, b) => a.x - b.x);
+      const span = comps[comps.length - 1].x - comps[0].x, grupos = [[]];
+      comps.forEach((c, i) => { if (i && c.x - comps[i - 1].x > span * 0.08) grupos.push([]); grupos[grupos.length - 1].push(c); });
+      return grupos.map((l) => {
+        const porMat = new Map();
+        for (const c of l) { if (!porMat.has(c.mat)) porMat.set(c.mat, []); porMat.get(c.mat).push(c.g); }
+        return [...porMat].map(([mat, gs]) => ({ geo: mergeGeometries(gs), mat }));
+      });
+    }
+    // árvore (tronco, galhos, folhas): todas as malhas juntas, base em y = 0, altura = 1
+    function emPeJunto(malhas) {
+      const caixa = new THREE.Box3();
+      for (const { geo } of malhas) { geo.computeBoundingBox(); caixa.union(geo.boundingBox); }
+      const c = caixa.getCenter(new THREE.Vector3()), h = caixa.max.y - caixa.min.y;
+      for (const { geo } of malhas) { geo.translate(-c.x, -caixa.min.y, -c.z); geo.scale(1 / h, 1 / h, 1 / h); geo.computeBoundingSphere(); }
+      return malhas;
+    }
+    // modelo → lista de variantes; cada variante = [{ geo, mat }] (um por material)
+    const planta = (arq) => carregar(arq.includes('/') ? `${arq}.glb` : `plantas/${arq}.glb`).then((gl) => {
+      if (!gl) return [];
+      gl.scene.updateMatrixWorld(true);
+      const malhas = [];
+      gl.scene.traverse((o) => {
+        if (!o.isMesh) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach((mt, k) => {
+          const g = paraFloat(o.geometry.clone()).applyMatrix4(o.matrixWorld);
+          if (mats.length > 1) { const gr = o.geometry.groups[k]; g.setIndex(Array.from(g.index.array.slice(gr.start, gr.start + gr.count))); g.clearGroups(); }
+          malhas.push({ geo: g, mat: matPlanta(mt) });
+        });
+      });
+      // troncos e galhos das árvores: um só marrom fosco (alguns vinham quase brancos por reflexo, outros cinza)
+      if (arq.startsWith('arvores/')) for (const { mat } of malhas) if (!mat.userData.verde) {
+        mat.userData.tronco = true;
+        mat.roughness = 1; mat.metalness = 0; mat.roughnessMap = null; mat.metalnessMap = null;
+        if (mat.isMeshPhysicalMaterial) { mat.specularIntensity = 0.15; mat.clearcoat = 0; mat.sheen = 0; }
+      }
+      if (/pine_sapling/.test(arq)) return separarEmX(malhas).map(emPeJunto);
+      if (arq.startsWith('arvores/') || malhas.length > 1) return [emPeJunto(malhas)];
+      return variantes(malhas[0].geo).map((g) => [{ geo: emPe(g), mat: malhas[0].mat }]);
+    });
+    const ARQ_ARV = [...new Set(ARV_REAIS.map(([a]) => a)), 'pine_sapling_small'];
+    const ARQ_PLANTAS = ['shrub_02', 'shrub_04', 'shrub_01', 'fern_02', 'calathea_orbifolia_01', 'anthurium_botany_01',
+      'periwinkle_plant', 'flower_gazania', 'flower_ursinia', ...ARQ_ARV.map((a) => 'arvores/' + a)];
+    Promise.all(ARQ_PLANTAS.map((a) => planta(a))).then((lista) => {
+      const V = Object.fromEntries(ARQ_PLANTAS.map((a, i) => [a.replace('arvores/', ''), lista[i]]));
+      const porVar = new Map(); // variante → matrizes
+      const pos = (variante, x, z, alt, larg = 1) => {
+        if (!variante) return;
+        if (!porVar.has(variante)) porVar.set(variante, []);
+        porVar.get(variante).push(new THREE.Matrix4().compose(new THREE.Vector3(x, terrainH(x, z) - 0.02, z),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rr() * 6.28, 0)), new THREE.Vector3(alt * larg, alt, alt * larg)));
+      };
+      const um = (arr, i) => (arr && arr.length ? arr[i % arr.length] : null);
+      // sebes: arbustos de galhos finos e de folha clara alternados, com variação de tamanho
+      const sebe = [...(V.shrub_02 || []), ...(V.shrub_04 || [])];
+      SEBES.forEach(([x, z, t], i) => {
+        pos(um(sebe, i * 3 + (i % 2)), x, z, (1.2 + rr() * 0.4) * t, 1.1);
+        pos(um(sebe, i * 3 + 1), x + (rr() - 0.5) * 0.6, z + (rr() - 0.5) * 0.6, (1.0 + rr() * 0.3) * t, 1.2);
+      });
+      // arbustos soltos: samambaia, calathea, antúrio e arbusto, cada um com ervas pequenas no pé
+      const soltos = [...(V.fern_02 || []), ...(V.calathea_orbifolia_01 || []), ...(V.anthurium_botany_01 || []), ...(V.shrub_02 || [])];
+      ARBUSTOS.forEach(([x, z, t], i) => {
+        pos(um(soltos, i * 5), x, z, t);
+        for (let k = 0; k < 2; k++) { const a = rr() * 6.28; pos(um(V.shrub_01, i + k), x + Math.cos(a) * t * 0.6, z + Math.sin(a) * t * 0.6, 0.3 + rr() * 0.15); }
+      });
+      // canteiros: flores (gazânia, ursínia, vinca) em touceiras de 25 a 40 cm
+      const flores = [...(V.flower_gazania || []), ...(V.flower_ursinia || []), ...(V.periwinkle_plant || [])];
+      for (const [x0, x1, z0, z1] of CANTEIROS) {
+        const n = Math.round(((x1 - x0) * (z1 - z0)) / 0.12);
+        for (let i = 0; i < n; i++) pos(um(flores, Math.floor(rr() * 97)), x0 + rr() * (x1 - x0), z0 + rr() * (z1 - z0), 0.25 + rr() * 0.15);
+      }
+      // árvores: o modelo de cada posição (a gerada entra só se o modelo não carregou) + pinheirinhos em volta de três delas
+      ARV_REAIS.forEach(([arq, alt], i) => {
+        const [x, z, t] = ARVORES[i];
+        if (V[arq]?.length) pos(V[arq][0], x, z, alt * (0.9 + 0.1 * t)); else tree(x, z, t, i + 1);
+      });
+      for (const [i, dx, dz] of [[0, 2.4, 1.2], [2, -2.2, 1.6], [6, 2.6, -0.4], [5, -2.4, 0.6]]) {
+        const [x, z] = ARVORES[i];
+        if (livre(x + dx, z + dz)) pos(um(V.pine_sapling_small, i), x + dx, z + dz, 2.6 + rr() * 0.9);
+      }
+      let tri = 0;
+      for (const [variante, mats] of porVar) {
+        const arvore = variante.length > 1;
+        for (const { geo, mat } of variante) {
+          vento(mat, arvore ? 0.004 : 0.03, false, arvore ? 0.45 : 0.7); // árvore: ~2 cm no topo, devagar
+          const im = new THREE.InstancedMesh(geo, mat, mats.length);
+          mats.forEach((m, k) => im.setMatrixAt(k, m));
+          im.castShadow = true; im.receiveShadow = true;
+          im.computeBoundingSphere();
+          root.add(im);
+          tri += geo.index.count / 3 * mats.length;
+        }
+      }
+      stats.plantas = Math.round(tri);
       S.atualizaSombra = 2;
     });
   }
