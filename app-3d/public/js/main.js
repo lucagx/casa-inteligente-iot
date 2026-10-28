@@ -83,8 +83,13 @@ camera.position.set(70, 42, 86);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
-controls.minDistance = 5;
+// V9: câmera livre — zoom vai até 1,2 m e na direção do mouse (não só para o centro); botão direito arrasta pelo chão;
+// WASD/setas andam (ver moverCamera). O alvo fica preso à ilha para não se perder no vazio.
+controls.minDistance = 1.2;
 controls.maxDistance = 75;
+controls.zoomToCursor = true;
+controls.screenSpacePanning = false; // arrastar com o botão direito anda no plano do chão
+controls.panSpeed = 0.9;
 controls.maxPolarAngle = Math.PI * 0.64;
 controls.target.set(1, 2.2, 0.5);
 controls.autoRotateSpeed = 0.35;
@@ -211,6 +216,50 @@ let idle = 0;
 controls.addEventListener('start', () => { idle = 0; controls.autoRotate = false; tween = null; });
 controls.addEventListener('change', () => { if (!tween) idle = 0; });
 
+// V9: teclado — WASD ou setas andam no plano do chão (para onde a câmera olha), Q/E descem/sobem, Shift corre.
+// A velocidade cresce com a distância ao alvo (de perto anda devagar, de longe atravessa a ilha rápido).
+const teclas = new Set();
+const MOVE = { KeyW: [0, 1], ArrowUp: [0, 1], KeyS: [0, -1], ArrowDown: [0, -1], KeyA: [-1, 0], ArrowLeft: [-1, 0], KeyD: [1, 0], ArrowRight: [1, 0] };
+addEventListener('keydown', (e) => {
+  if (e.target.closest?.('input, textarea, select, [contenteditable]') || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (MOVE[e.code] || e.code === 'KeyQ' || e.code === 'KeyE') {
+    teclas.add(e.code);
+    if (e.code.startsWith('Arrow')) e.preventDefault(); // setas não rolam a página
+  }
+  if (e.key === 'Shift') teclas.add('Shift');
+});
+addEventListener('keyup', (e) => { teclas.delete(e.code); if (e.key === 'Shift') teclas.delete('Shift'); });
+addEventListener('blur', () => teclas.clear());
+const LIM = { x: 17.5, z: 13.5, yMin: 0.2, yMax: 12 }; // o alvo não sai da ilha
+const frente = new THREE.Vector3(), lado = new THREE.Vector3(), passo = new THREE.Vector3();
+function moverCamera(dt) {
+  if (teclas.size && !(teclas.size === 1 && teclas.has('Shift'))) {
+    let fx = 0, fz = 0, fy = 0;
+    for (const k of teclas) { if (MOVE[k]) { fx += MOVE[k][0]; fz += MOVE[k][1]; } }
+    if (teclas.has('KeyE')) fy += 1;
+    if (teclas.has('KeyQ')) fy -= 1;
+    camera.getWorldDirection(frente); frente.y = 0;
+    if (frente.lengthSq() < 1e-6) frente.set(0, 0, -1);
+    frente.normalize();
+    lado.crossVectors(frente, camera.up).normalize();
+    const dist = camera.position.distanceTo(controls.target);
+    const v = (1.2 + dist * 0.18) * (teclas.has('Shift') ? 2.5 : 1) * dt; // ~2 m/s de perto, ~8 m/s na visão geral
+    passo.set(0, 0, 0).addScaledVector(frente, fz).addScaledVector(lado, fx);
+    if (passo.lengthSq() > 0) passo.normalize().multiplyScalar(v);
+    passo.y = fy * v * 0.6;
+    if (passo.lengthSq() > 0) {
+      tween = null; idle = 0; controls.autoRotate = false;
+      camera.position.add(passo); controls.target.add(passo);
+    }
+  }
+  // limites: alvo dentro da ilha (vale também para o arrasto com o mouse) e câmera acima do chão
+  const t = controls.target, antes = t.clone();
+  t.set(THREE.MathUtils.clamp(t.x, -LIM.x, LIM.x), THREE.MathUtils.clamp(t.y, LIM.yMin, LIM.yMax), THREE.MathUtils.clamp(t.z, -LIM.z, LIM.z));
+  camera.position.add(antes.sub(t).negate());
+  const dentro = Math.abs(camera.position.x) < 16 && Math.abs(camera.position.z) < 12;
+  if (dentro && camera.position.y < 0.5) camera.position.y = 0.5; // não entra embaixo do gramado
+}
+
 // Enquadramento dinâmico: o centro da cena vai para o centro da área livre da tela.
 // Usa um "quadro virtual" maior que a tela (setViewOffset) e mostra só a parte visível,
 // deslocada. O campo de visão é corrigido para o zoom não mudar quando o painel abre/fecha.
@@ -319,6 +368,7 @@ function frame() {
     if (idle > 16 && !controls.autoRotate) controls.autoRotate = true;
   }
   updateFraming(dt, shot);
+  if (!shot) moverCamera(dt);
   controls.update(dt);
 
   if (fixedNight !== null) atmo.setNight(Number(fixedNight));
