@@ -11,6 +11,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 import { buildWorld } from './world.js';
 import { createAtmosphere } from './atmosphere.js';
 import { createUI } from './ui.js';
+import { createTour } from './tour.js';
 import { SENSORES } from './config.js';
 
 // ---------- qualidade ----------
@@ -222,6 +223,7 @@ const teclas = new Set();
 const MOVE = { KeyW: [0, 1], ArrowUp: [0, 1], KeyS: [0, -1], ArrowDown: [0, -1], KeyA: [-1, 0], ArrowLeft: [-1, 0], KeyD: [1, 0], ArrowRight: [1, 0] };
 addEventListener('keydown', (e) => {
   if (e.target.closest?.('input, textarea, select, [contenteditable]') || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (document.body.dataset.tour) return; // P3: no tour as setas trocam de capítulo
   if (MOVE[e.code] || e.code === 'KeyQ' || e.code === 'KeyE') {
     teclas.add(e.code);
     if (e.code.startsWith('Arrow')) e.preventDefault(); // setas não rolam a página
@@ -332,6 +334,7 @@ const fixedNight = params.get('night');
 const maxFrames = Number(params.get('frames') || 10);
 let frameCount = 0, sinceRender = 0, shadowNight = -1;
 let ui = null;
+let tour = null; // P3: tour da apresentação
 // céu: 'ldr' (sensor da placa), 'relogio' (hora do PC) ou 'manual' (hora escolhida)
 let sky = { mode: 'ldr', hour: 12 }, ldrNight = 0, lastSkyHour = -1;
 const nightFromHour = (h) => 1 - THREE.MathUtils.smoothstep(h, 5.2, 7.0) * (1 - THREE.MathUtils.smoothstep(h, 17.3, 19.3));
@@ -365,7 +368,8 @@ function frame() {
     if (tween.t >= 1) tween = null;
   } else {
     idle += dt;
-    if (idle > 16 && !controls.autoRotate) controls.autoRotate = true;
+    // no tour a câmera fica parada no componente do capítulo (girar tiraria o fio do lugar)
+    if (idle > 16 && !controls.autoRotate && !document.body.dataset.tour) controls.autoRotate = true;
   }
   updateFraming(dt, shot);
   if (!shot) moverCamera(dt);
@@ -383,6 +387,7 @@ function frame() {
 
   composer.render(dt);
   labels.render(scene, camera);
+  tour?.tick();
   watchFps(realDt);
 }
 
@@ -436,10 +441,15 @@ async function init() {
   window.__loadMs = performance.now() - t0;
   console.info(`[casa3d] perfil ${tier}${qualityAuto ? ' (auto)' : ''} · peças estáticas ${world.stats.before} → ${world.stats.after} · ${Math.round(window.__loadMs)} ms`);
 
+  // P3: tour da apresentação — botão "Apresentar", tecla T ou ?tour=1 no endereço
+  tour = createTour({ world, camera, flyTo, ui });
+  document.getElementById('tourBtn').addEventListener('click', () => tour.abrir());
+
   frame();
   ui.ready();
-  if (!(start && VIEWS[start])) setTimeout(() => flyTo('geral', 3.4), 250);
-  window.__casa = { world, atmo, flyTo, camera, controls, renderer, scene, composer, applyTier, get tier() { return tier; }, fps };
+  if (params.has('tour')) setTimeout(() => tour.abrir(), 600);
+  else if (!(start && VIEWS[start])) setTimeout(() => flyTo('geral', 3.4), 250);
+  window.__casa = { world, atmo, flyTo, get tour() { return tour; }, camera, controls, renderer, scene, composer, applyTier, get tier() { return tier; }, fps };
 }
 init();
 

@@ -1031,9 +1031,11 @@ export function createUI({
       e.altKey
     )
       return;
+    if (document.body.dataset.tour) return; // P3: teclas do tour
     const k = { 1: "painel", 2: "compacto", 3: "foco" }[e.key];
     if (k) setLayout(k);
   });
+  addEventListener("tour-mudou", () => (freeDirty = true));
   addEventListener("resize", applyLayout);
   for (const el of [panel, hud])
     el.addEventListener("transitionend", () => (freeDirty = true));
@@ -1110,7 +1112,9 @@ export function createUI({
       if (rc.width > 2 && rc.height > 2) rects.push(rc);
     };
     // a faixa compacta é pequena e fica no canto: não desloca a cena (só o painel completo desloca)
-    if (document.body.dataset.layout === "painel") add(panel);
+    // P3: com o tour aberto, o painel some e quem desloca a cena é o texto do tour
+    if (document.body.dataset.tour) add($("#tour"));
+    else if (document.body.dataset.layout === "painel") add(panel);
     if (mobile()) add($("#views"));
     for (const rc of rects) {
       if (rc.height > h * 0.45 && rc.width < w * 0.6) {
@@ -1148,6 +1152,10 @@ export function createUI({
     },
     setLayout,
     setQuality,
+    // leituras atuais (V4, V5, V11, V3…) para o tour da apresentação
+    get values() {
+      return values;
+    },
     setFps(v) {
       qBtn.textContent = `${qLabel} · ${Math.round(v)} FPS`;
     },

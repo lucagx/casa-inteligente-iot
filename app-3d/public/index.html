@@ -17,7 +17,9 @@
   <link rel="stylesheet" href="/vendor/fonts/dm-sans/700.css" />
   <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/400.css" />
   <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/600.css" />
+  <link rel="stylesheet" href="/vendor/fonts-var/archivo/wdth.css" />
   <link rel="stylesheet" href="/css/style.css" />
+  <link rel="stylesheet" href="/css/tour.css" />
   <script type="importmap">
       {
         "imports": {
@@ -132,7 +134,50 @@
   <div class="dock-bar">
     <nav class="views" id="views" aria-label="Câmeras"></nav>
     <div class="layouts" id="layouts" role="group" aria-label="Layout da tela"></div>
+    <button type="button" class="tour-btn" id="tourBtn" title="Tour da apresentação (T)">Apresentar</button>
   </div>
+
+  <!-- P3: tour da apresentação (js/tour.js) -->
+  <svg class="tour-fio" id="tourFio" aria-hidden="true" hidden>
+    <path class="sombra" d="" />
+    <path class="linha" d="" />
+    <circle class="anel" r="30" />
+    <circle class="alvo" r="14" />
+    <circle class="ponto" r="4" />
+  </svg>
+  <div class="tour-extra" id="tourExtra" hidden></div>
+  <aside class="tour" id="tour" aria-label="Apresentação" hidden>
+    <div class="tour-topo">
+      <span>Apresentação · Casa Inteligente</span>
+      <span id="tourConta">01 / 09</span>
+    </div>
+    <div class="tour-dados" aria-label="Leituras ao vivo">
+      <span class="vivo"><i></i>casa 3D ao vivo</span>
+      <span>V4 <b id="tourT">--</b> °C</span>
+      <span>V5 <b id="tourU">--</b> %</span>
+      <span>V11 <b id="tourP">--</b></span>
+      <span>V3 <b id="tourM">--</b></span>
+    </div>
+    <div class="tour-cap">
+      <p class="tour-pino"><span class="traco"></span><span id="tourPino"></span></p>
+      <h2 id="tourTitulo"></h2>
+      <p class="tour-texto" id="tourTexto"></p>
+      <div class="tour-placa">
+        <span class="led"></span>
+        <div>
+          <span class="rot">Na placa agora</span>
+          <span id="tourPlaca"></span>
+        </div>
+      </div>
+      <p class="tour-nota" id="tourNota" hidden></p>
+    </div>
+    <ol class="tour-lista" id="tourLista" aria-label="Capítulos"></ol>
+    <div class="tour-nav">
+      <button type="button" class="ant" id="tourAnt">← Anterior</button>
+      <button type="button" class="prox" id="tourProx">Próximo →</button>
+      <button type="button" class="sair" id="tourSair" title="Sair do tour (Esc)">Sair</button>
+    </div>
+  </aside>
   <div class="feed" id="feed">
     <div class="feed-rows" id="feedRows" aria-live="polite"></div>
     <button type="button" class="feed-toggle" id="feedToggle" aria-expanded="true">

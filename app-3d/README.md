@@ -257,6 +257,10 @@ API: `GET /api/scenes` (lista) e `POST /api/scene {"nome":"sai","origem":"painel
 - **Página do projeto:** `http://<servidor>/apresentacao/` — pública (sem senha), explica arquitetura,
   pinagem, regras, Blynk, IoB, privacidade e limitações, com capturas fixas (`public/apresentacao/img/`).
   Serve de link para quem assiste e de plano B sem a placa. O botão **Ver ao vivo** leva ao login.
+- **Tour guiado** (botão **Apresentar**, tecla **T** ou `?tour=1` no endereço): 9 capítulos sobre a casa ao vivo
+  — projeto, caminho do dado, DHT11/janela, PIR/luz, alarme, Blynk, IoB, privacidade e perguntas. A câmera vai
+  até cada componente e um fio colorido liga o pino ao ponto na cena. **→ / PageDown / espaço** avançam,
+  **← / PageUp** voltam (funciona com passador de slides), **Esc** sai. Código em `public/js/tour.js`.
 - **Câmeras** (barra inferior): Visão geral, Sala, Entrada, Janela, Garagem, Cobertura e Terreno.
 - **Pontos brilhantes na casa** são clicáveis: luz, porta, janela e sirene alternam direto na cena.
   Passe o mouse para ver o nome do componente e a leitura.
