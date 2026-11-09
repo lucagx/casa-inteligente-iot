@@ -109,11 +109,13 @@ if (process.env.RENDER && !SENHA) {
 // /healthz fica aberto (sem dados) para o health check do Render e monitores
 app.get("/healthz", (req, res) => res.type("text").send("ok"));
 // sem login: a casca do app do celular (PWA: manifest, service worker e ícones, que o navegador busca sem
-// cookie), a tela /entrar com seu estilo e fundo, e as fontes locais. Nada disso tem dados nem controla nada.
+// cookie), a tela /entrar com seu estilo e fundo, a página pública /apresentacao (texto e capturas, sem dados
+// ao vivo) e as fontes locais. Nada disso tem dados nem controla nada.
 const ABERTOS = [
   /^\/painel\/(manifest\.webmanifest|sw\.js|icones\/\w[\w.-]*)$/,
   /^\/entrar\/[\w.-]+$/,
-  /^\/vendor\/fonts\//,
+  /^\/apresentacao(\/([\w-]+\/)*[\w.-]*)?$/,
+  /^\/vendor\/fonts(-var)?\//,
 ];
 instalarAuth(app, {
   usuario: USUARIO,
@@ -162,6 +164,11 @@ app.use(
 app.use(
   "/vendor/fonts",
   express.static(path.join(__dirname, "node_modules/@fontsource")),
+);
+// fontes variáveis (Archivo com largura, títulos da /apresentacao)
+app.use(
+  "/vendor/fonts-var",
+  express.static(path.join(__dirname, "node_modules/@fontsource-variable")),
 );
 // gráficos do painel IoB (I2), também local
 app.use(

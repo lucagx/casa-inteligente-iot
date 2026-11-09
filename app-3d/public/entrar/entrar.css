@@ -181,7 +181,22 @@ h1 {
   background: #8ff0ff;
 }
 
+.apresentacao {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 14px;
+  color: var(--cyan);
+  text-decoration: none;
+}
+
+.apresentacao:hover {
+  text-decoration: underline;
+}
+
 button:focus-visible,
+.apresentacao:focus-visible,
 .lembrar input:focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: 2px;

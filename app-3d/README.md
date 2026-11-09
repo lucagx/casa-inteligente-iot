@@ -254,6 +254,9 @@ API: `GET /api/scenes` (lista) e `POST /api/scene {"nome":"sai","origem":"painel
 
 ## Usando na apresentação
 
+- **Página do projeto:** `http://<servidor>/apresentacao/` — pública (sem senha), explica arquitetura,
+  pinagem, regras, Blynk, IoB, privacidade e limitações, com capturas fixas (`public/apresentacao/img/`).
+  Serve de link para quem assiste e de plano B sem a placa. O botão **Ver ao vivo** leva ao login.
 - **Câmeras** (barra inferior): Visão geral, Sala, Entrada, Janela, Garagem, Cobertura e Terreno.
 - **Pontos brilhantes na casa** são clicáveis: luz, porta, janela e sirene alternam direto na cena.
   Passe o mouse para ver o nome do componente e a leitura.

@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#070b12" />
+    <meta
+      name="description"
+      content="Mini casa inteligente com NodeMCU ESP8266, Blynk, gêmeo digital 3D e um aplicativo de Internet do Comportamento."
+    />
+    <title>Apresentação · Casa Inteligente</title>
+    <link rel="icon" href="/painel/icones/icone.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/vendor/fonts-var/archivo/wdth.css" />
+    <link rel="stylesheet" href="/vendor/fonts/ibm-plex-sans/400.css" />
+    <link rel="stylesheet" href="/vendor/fonts/ibm-plex-sans/500.css" />
+    <link rel="stylesheet" href="/vendor/fonts/ibm-plex-sans/600.css" />
+    <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/400.css" />
+    <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/600.css" />
+    <link rel="stylesheet" href="/vendor/fonts/unbounded/700.css" />
+    <link rel="stylesheet" href="/apresentacao/apresentacao.css" />
+  </head>
+  <body>
+    <nav class="nav" aria-label="Seções">
+      <a class="marca" href="#topo">Casa Inteligente</a>
+      <ul>
+        <li><a href="#fluxo">Como funciona</a></li>
+        <li><a href="#pinos">Pinagem</a></li>
+        <li><a href="#regras">Regras</a></li>
+        <li><a href="#blynk">Blynk</a></li>
+        <li><a href="#iob">IoB</a></li>
+        <li><a href="#limites">Limitações</a></li>
+      </ul>
+      <a class="botao" href="/">Ver ao vivo →</a>
+    </nav>
+
+    <main>
+      <!-- capa -->
+      <header class="capa" id="topo">
+        <div class="miolo">
+          <p class="eyebrow c-casa">FEPI · Internet das Coisas e do Comportamento · 2026</p>
+          <h1>Uma protoboard que acende uma casa.</h1>
+          <p class="lead">
+            O NodeMCU ESP8266 lê os sensores e decide; o Blynk leva o dado; a casa 3D mostra; o aplicativo
+            aprende a rotina. Tudo sincronizado, nos dois sentidos.
+          </p>
+          <ul class="pinos" aria-label="Pinos da montagem">
+            <li class="c-sensor"><b>D2</b>DHT11</li>
+            <li class="c-sensor"><b>D5</b>PIR</li>
+            <li class="c-atuador"><b>D1</b>LED da luz</li>
+            <li class="c-atuador"><b>D0</b>LED da porta</li>
+            <li class="c-atuador"><b>D7</b>servo</li>
+            <li class="c-atuador"><b>D8</b>buzzer</li>
+            <li class="c-casa"><b>D6</b>botão</li>
+          </ul>
+          <div class="acoes">
+            <a class="botao grande" href="/">Ver a casa ao vivo</a>
+            <a class="botao grande vazado" href="#fluxo">Como funciona ↓</a>
+          </div>
+        </div>
+      </header>
+
+      <!-- por dentro: a protoboard 3D isométrica entra aqui quando o módulo (branch separada) for integrado -->
+      <section class="secao" id="por-dentro" hidden>
+        <div class="miolo duas">
+          <div>
+            <p class="eyebrow c-casa">Por dentro da placa</p>
+            <h2>O circuito, peça por peça</h2>
+            <p class="lead">Passe o mouse numa peça para ver o pino, o datastream e o que ela faz na casa.</p>
+          </div>
+          <div id="protoboard-3d"></div>
+        </div>
+      </section>
+
+      <!-- fluxo do dado -->
+      <section class="secao alt" id="fluxo">
+        <div class="miolo">
+          <p class="eyebrow c-nuvem">Wi-Fi · API do Blynk · SSE</p>
+          <h2>Como um movimento vira uma luz acesa na tela</h2>
+          <p class="lead">
+            A placa decide primeiro, sem esperar a nuvem. Depois o dado sobe para o Blynk e chega à casa 3D e ao
+            celular. Os comandos fazem o caminho de volta — e só valem no modo manual, para não brigar com as
+            regras da placa.
+          </p>
+          <ol class="etapas">
+            <li class="cartao c-sensor">
+              <p class="eyebrow">Percepção</p>
+              <h3>PIR detecta</h3>
+              <p>Variação de infravermelho no HC-SR501, pino D5.</p>
+              <span class="tempo">instantâneo</span>
+            </li>
+            <li class="cartao c-atuador">
+              <p class="eyebrow">Decisão</p>
+              <h3>ESP8266 decide</h3>
+              <p>A regra da luz roda no loop do firmware, sem esperar a nuvem.</p>
+              <span class="tempo">LED D1 acende já</span>
+            </li>
+            <li class="cartao c-nuvem">
+              <p class="eyebrow">Nuvem</p>
+              <h3>Blynk recebe</h3>
+              <p>A placa publica V11 e V0 só quando o valor muda.</p>
+              <span class="tempo">Wi-Fi</span>
+            </li>
+            <li class="cartao c-nuvem">
+              <p class="eyebrow">Ponte</p>
+              <h3>Servidor lê</h3>
+              <p>Consulta a API do Blynk e grava o evento no Postgres.</p>
+              <span class="tempo">leitura rápida do V11</span>
+            </li>
+            <li class="cartao c-casa">
+              <p class="eyebrow">Gêmeo digital</p>
+              <h3>Casa 3D</h3>
+              <p>Recebe por SSE e acende as luzes da cena.</p>
+              <span class="tempo">~0,3 s no total</span>
+            </li>
+            <li class="cartao c-iob">
+              <p class="eyebrow">IoB</p>
+              <h3>Celular</h3>
+              <p>O evento entra na linha do tempo e na rotina aprendida.</p>
+              <span class="tempo">histórico</span>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- pinagem -->
+      <section class="secao" id="pinos">
+        <div class="miolo">
+          <p class="eyebrow c-atuador">D0 – D8 · V0 – V18</p>
+          <h2>Pinagem: da placa até a casa</h2>
+          <div class="tabela" role="region" aria-label="Tabela de pinos" tabindex="0">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">PINO</th>
+                  <th scope="col">COMPONENTE</th>
+                  <th scope="col">DATASTREAM</th>
+                  <th scope="col">NA CASA 3D</th>
+                  <th scope="col">NA MONTAGEM</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="c-nuvem"><td>D0</td><td>LED da porta</td><td>V1</td><td>Porta e fechadura</td><td class="estado">ativo</td></tr>
+                <tr class="c-atuador"><td>D1</td><td>LED da iluminação</td><td>V0</td><td>Luzes internas, jardim e piscina</td><td class="estado">ativo</td></tr>
+                <tr class="c-sensor"><td>D2</td><td>DHT11</td><td>V4 · V5</td><td>Tela da sala e painel</td><td class="estado">ativo</td></tr>
+                <tr class="c-sensor"><td>D5</td><td>PIR HC-SR501</td><td>V11 · V14</td><td>Cone de detecção na entrada</td><td class="estado">ativo</td></tr>
+                <tr class="c-casa"><td>D6</td><td>Botão do alarme</td><td>V9</td><td>Alarme armado / desarmado</td><td class="estado">ativo</td></tr>
+                <tr class="c-sensor"><td>D7</td><td>Servo SG90</td><td>V2 · V7</td><td>Janelas virtuais</td><td class="estado">ativo</td></tr>
+                <tr class="c-atuador"><td>D8</td><td>Buzzer</td><td>V8</td><td>Sirene na cobertura e no jardim</td><td class="estado">ativo</td></tr>
+                <tr class="c-off"><td>A0</td><td>LDR</td><td>V6 · V10</td><td>Dia e noite</td><td class="estado">desligado (flag)</td></tr>
+                <tr class="c-off"><td>D4</td><td>HC-SR04</td><td>V12</td><td>Distância do carro na garagem</td><td class="estado">desligado (flag)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="nota">
+            GND comum em tudo; LEDs com resistor de 220 Ω. LDR e HC-SR04 saíram da montagem e ficam desligados por
+            configuração no firmware (<span class="mono">USAR_LDR</span> e <span class="mono">USAR_HCSR04</span>);
+            religam trocando um 0 por 1.
+          </p>
+        </div>
+      </section>
+
+      <!-- regras -->
+      <section class="secao alt" id="regras">
+        <div class="miolo">
+          <p class="eyebrow c-sensor">D2 · D5 · D6 · D1 · D7 · D8</p>
+          <h2>Regras: a placa decide sozinha</h2>
+          <p class="lead">
+            As regras rodam no firmware, a cada volta do loop. Sem internet, a casa continua acendendo a luz e
+            disparando o alarme.
+          </p>
+          <div class="regras">
+            <article class="cartao c-atuador">
+              <p class="eyebrow">D5 PIR → D1 LED · V11 V0</p>
+              <h3>Iluminação</h3>
+              <p class="se"><span>SE</span> presença E modo automático<br /><span>ENTÃO</span> acende o D1 e a casa 3D</p>
+              <p>O PIR sozinho só diz que houve movimento; a regra transforma isso em ação.</p>
+            </article>
+            <article class="cartao c-atuador">
+              <p class="eyebrow">D6 / V9 + D5 → D8 · V8</p>
+              <h3>Alarme</h3>
+              <p class="se"><span>SE</span> alarme armado E presença<br /><span>ENTÃO</span> sirene por 4 s + alerta no celular</p>
+              <p>Presença só vira intervenção quando o usuário mostrou a intenção de proteger a casa.</p>
+            </article>
+            <article class="cartao c-sensor">
+              <p class="eyebrow">D2 DHT11 → D7 servo · V4 V7</p>
+              <h3>Janela com histerese</h3>
+              <svg
+                class="histerese"
+                viewBox="0 0 420 190"
+                role="img"
+                aria-label="A temperatura sobe acima de 30 graus e a janela abre; ela só fecha quando a temperatura desce abaixo de 27 graus"
+              >
+                <rect x="40" y="10" width="370" height="140" rx="6" fill="rgba(255,255,255,0.03)" />
+                <rect x="40" y="54" width="370" height="34" fill="#ffc27a" opacity="0.1" />
+                <line x1="40" y1="54" x2="410" y2="54" stroke="#ff6b81" stroke-dasharray="5 4" />
+                <line x1="40" y1="88" x2="410" y2="88" stroke="#6aa8ff" stroke-dasharray="5 4" />
+                <text x="34" y="58" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#ff6b81">30°</text>
+                <text x="34" y="92" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="11" fill="#6aa8ff">27°</text>
+                <path
+                  d="M40 122 C 90 112, 110 66, 150 48 S 200 62, 230 74 S 270 70, 290 94 S 340 112, 410 118"
+                  fill="none"
+                  stroke="#eaf1f8"
+                  stroke-width="2.5"
+                />
+                <rect x="150" y="160" width="140" height="16" rx="3" fill="#36e39a" />
+                <text x="158" y="172" font-family="JetBrains Mono, monospace" font-size="10" fill="#04121a">JANELA ABERTA</text>
+                <text x="44" y="172" font-family="JetBrains Mono, monospace" font-size="10" fill="#7d8ea3">fechada</text>
+                <text x="304" y="172" font-family="JetBrains Mono, monospace" font-size="10" fill="#7d8ea3">fechada</text>
+              </svg>
+              <p>Entre 30 °C e 27 °C a janela fica como está: sem servo tremendo perto de um único valor.</p>
+            </article>
+          </div>
+          <pre class="codigo"><code><span class="com">// casa_inteligente.ino — a luz só muda quando o estado desejado é outro</span>
+void atualizarLuzAutomatica() {
+  if (!modoAutomatico) return;
+  bool desejada = presenca;            <span class="com">// USAR_LDR 0: só a presença</span>
+  if (desejada != luzLigada) controlarLuz(desejada);
+}</code></pre>
+        </div>
+      </section>
+
+      <!-- Blynk -->
+      <section class="secao" id="blynk">
+        <div class="miolo duas">
+          <div class="miolo" style="margin: 0">
+            <p class="eyebrow c-nuvem">Blynk Cloud · datastreams</p>
+            <h2>Cada informação é um pino virtual</h2>
+            <p class="lead">
+              O Blynk é a camada de nuvem: guarda o estado atual, mostra o painel e leva os comandos. A placa só
+              publica quando o valor muda, para caber no plano gratuito, e reconecta sem travar as regras locais.
+            </p>
+            <div class="destaque">
+              <strong>V3 · automático ou manual</strong>
+              <p>
+                No automático, a placa manda nos atuadores. No manual, passam os comandos do Blynk, da casa 3D e do
+                celular. Assim usuário e regra nunca disputam o mesmo LED.
+              </p>
+            </div>
+          </div>
+          <ul class="vpinos" aria-label="Datastreams">
+            <li class="cartao c-atuador"><b>V0</b>Iluminação<small>comando + estado</small></li>
+            <li class="cartao c-nuvem"><b>V1</b>Porta<small>comando + estado</small></li>
+            <li class="cartao c-sensor"><b>V2</b>Janela<small>comando</small></li>
+            <li class="cartao c-casa"><b>V3</b>Auto / manual<small>comando + estado</small></li>
+            <li class="cartao c-sensor"><b>V4</b>Temperatura<small>telemetria °C</small></li>
+            <li class="cartao c-sensor"><b>V5</b>Umidade<small>telemetria %</small></li>
+            <li class="cartao c-sensor"><b>V7</b>Janela aberta?<small>texto</small></li>
+            <li class="cartao c-atuador"><b>V8</b>Estado do alarme<small>texto</small></li>
+            <li class="cartao c-atuador"><b>V9</b>Armar alarme<small>comando + estado</small></li>
+            <li class="cartao c-sensor"><b>V11</b>Presença<small>telemetria</small></li>
+            <li class="cartao c-off"><b>V13</b>Terminal<small>log de eventos</small></li>
+            <li class="cartao c-iob"><b>V17</b>Conforto da janela<small>IoB → placa</small></li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- casa 3D -->
+      <section class="secao alt casa3d">
+        <div class="miolo">
+          <p class="eyebrow c-casa">Gêmeo digital · three.js</p>
+          <h2>O que é discreto na protoboard fica visível</h2>
+          <p class="lead">
+            Um LED de 5 mm vira a casa inteira acesa. Sem a placa, a casa roda as mesmas regras com sensores
+            simulados — o plano B da apresentação.
+          </p>
+          <div class="galeria">
+            <figure class="c-atuador">
+              <img src="img/casa-noite.jpg" alt="Casa à noite com as luzes acesas" loading="lazy" width="1240" height="697" />
+              <figcaption><b>D1</b>Presença à noite acende a casa inteira</figcaption>
+            </figure>
+            <figure class="c-sensor">
+              <img src="img/janela-dht11.jpg" alt="Parede com o sensor DHT11 e a janela movida pelo servo" loading="lazy" width="1240" height="697" />
+              <figcaption><b>D2 → D7</b>DHT11 na parede e a janela do servo</figcaption>
+            </figure>
+            <figure class="c-casa">
+              <img src="img/casa-dia.jpg" alt="Visão geral da casa de dia" loading="lazy" width="965" height="530" />
+              <figcaption><b>câmeras</b>Visão geral, sala, entrada, janela, garagem, cobertura e terreno</figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <!-- IoB -->
+      <section class="secao" id="iob">
+        <div class="miolo duas">
+          <div class="miolo" style="margin: 0; gap: 22px">
+            <p class="eyebrow c-iob">Histórico · Postgres · painel no celular</p>
+            <h2>De eventos a hábitos</h2>
+            <p class="lead">
+              A IoT coleta e transporta o dado; a IoB dá sentido a ele. Cada leitura do PIR e do DHT11 e cada
+              comando viram histórico, comparação com os dias anteriores e sugestões — que só viram automação com
+              um toque do usuário. Regras e médias, sem aprendizado de máquina.
+            </p>
+            <ul class="iob-grade">
+              <li class="cartao c-iob"><p class="eyebrow">PIR · V11</p><h3>Rotina aprendida</h3><p>Horários de saída e chegada pelo maior intervalo sem presença.</p></li>
+              <li class="cartao c-iob"><p class="eyebrow">PIR · V11</p><h3>Modo ausente</h3><p>Simula as luzes no padrão de cada hora com a casa vazia.</p></li>
+              <li class="cartao c-iob"><p class="eyebrow">DHT11 · V2 · V17</p><h3>Conforto da janela</h3><p>Limites de abrir e fechar aprendidos dos ajustes manuais.</p></li>
+              <li class="cartao c-iob"><p class="eyebrow">V0 · V20–V23</p><h3>Consumo</h3><p>Tempo de luz ligada vira kWh por cômodo e custo.</p></li>
+              <li class="cartao c-iob"><p class="eyebrow">todos</p><h3>Insights do dia</h3><p>Comparação com a média dos 7 dias anteriores.</p></li>
+              <li class="cartao c-iob"><p class="eyebrow">V1 · V8 · V11</p><h3>Alertas</h3><p>Porta aberta, invasão, calor com janela fechada, placa offline.</p></li>
+            </ul>
+            <p class="extras">
+              <strong>Extras:</strong> carro elétrico com carregador virtual (V18) no consumo e na tarifa branca;
+              cenas de um toque — Cheguei, Saí, Dormir.
+            </p>
+          </div>
+          <div class="celulares">
+            <img src="img/cel-casa.jpg" alt="Painel no celular: tela Casa" loading="lazy" width="420" height="888" />
+            <img src="img/cel-iob.jpg" alt="Painel no celular: tela IoB" loading="lazy" width="420" height="888" />
+            <img src="img/cel-consumo.jpg" alt="Painel no celular: tela Consumo" loading="lazy" width="420" height="888" />
+          </div>
+        </div>
+      </section>
+
+      <!-- privacidade -->
+      <section class="secao alt">
+        <div class="miolo duas">
+          <div class="miolo" style="margin: 0">
+            <p class="eyebrow c-nuvem">LGPD · Lei 13.709/2018</p>
+            <h2>Rotina é dado sensível</h2>
+            <p class="lead">
+              Horários de presença revelam quando a casa está vazia. Por isso o usuário vê tudo o que é guardado e
+              decide o que acontece com isso.
+            </p>
+          </div>
+          <div class="dados">
+            <div class="cartao guarda c-iob">
+              <p class="eyebrow">Guarda</p>
+              <ul>
+                <li>Movimento e hora, sem identificar quem</li>
+                <li>Temperatura e umidade a cada 5 min</li>
+                <li>Luz, porta, janela, alarme e modo</li>
+              </ul>
+            </div>
+            <div class="cartao nunca c-atuador">
+              <p class="eyebrow">Nunca guarda</p>
+              <ul>
+                <li>Imagem ou som</li>
+                <li>Localização</li>
+                <li>Nomes ou contatos</li>
+              </ul>
+            </div>
+            <p class="controles">consentimento · pausar coleta · retenção 7/30/90 dias · exportar JSON · apagar tudo</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- limitações -->
+      <section class="secao" id="limites">
+        <div class="miolo">
+          <p class="eyebrow c-off">O que ainda não faz</p>
+          <h2>Limitações e próximos passos</h2>
+          <ul class="limites">
+            <li class="cartao"><strong>DHT11 é lento e pouco preciso</strong><p>→ Trocar por DHT22 ou BME280</p></li>
+            <li class="cartao"><strong>PIR vê movimento, não pessoa parada</strong><p>→ Somar sensor de abertura de porta</p></li>
+            <li class="cartao"><strong>Servo derruba a tensão da placa</strong><p>→ Fonte externa de 5 V com GND comum</p></li>
+            <li class="cartao"><strong>Sugestões dependem de dias de histórico</strong><p>→ Observar mais tempo e validar os padrões</p></li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <footer class="fim">
+      <div class="miolo">
+        <div class="linha1">
+          <div class="miolo" style="margin: 0; gap: 14px; max-width: 720px">
+            <h2>Agora, a casa de verdade.</h2>
+            <p class="lead">Protoboard, Blynk, casa 3D e celular ao mesmo tempo.</p>
+          </div>
+          <a class="botao grande" href="/">Entrar e ver ao vivo →</a>
+        </div>
+        <div class="creditos">
+          <span>[NOMES DO GRUPO] · FEPI 2026</span>
+          <span>Carro: BYD Dolphin, Ddiaz Design, CC BY-NC-SA 4.0 · texturas Poly Haven, CC0</span>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
