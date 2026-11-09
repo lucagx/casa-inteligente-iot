@@ -18,6 +18,14 @@
     <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/600.css" />
     <link rel="stylesheet" href="/vendor/fonts/unbounded/700.css" />
     <link rel="stylesheet" href="/apresentacao/apresentacao.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js",
+          "three/addons/": "/vendor/three/examples/jsm/"
+        }
+      }
+    </script>
   </head>
   <body>
     <nav class="nav" aria-label="Seções">
@@ -59,12 +67,14 @@
         </div>
       </header>
 
-      <!-- por dentro: a protoboard 3D isométrica entra aqui quando o módulo (branch separada) for integrado -->
-      <section class="secao" id="por-dentro" hidden>
+      <!-- por dentro: protoboard 3D isométrica (js/protoboard/), carregada quando a seção chega perto da tela -->
+      <section class="secao" id="por-dentro">
         <div class="miolo duas">
-          <div>
-            <p class="eyebrow c-casa">Por dentro da placa</p>
-            <h2>O circuito, peça por peça</h2>
+          <div class="cabeca">
+            <div>
+              <p class="eyebrow c-casa">Por dentro da placa</p>
+              <h2>O circuito, peça por peça</h2>
+            </div>
             <p class="lead">Passe o mouse numa peça para ver o pino, o datastream e o que ela faz na casa.</p>
           </div>
           <div id="protoboard-3d"></div>
@@ -375,5 +385,31 @@ void atualizarLuzAutomatica() {
         </div>
       </div>
     </footer>
+
+    <script type="module">
+      // protoboard 3D: o three.js (~1 MB) só baixa quando a seção chega perto da tela
+      const alvo = document.getElementById("protoboard-3d");
+      const montar = async () => {
+        try {
+          const { montarProtoboard } = await import("/js/protoboard/index.js");
+          window.__pb = montarProtoboard(alvo);
+        } catch (e) {
+          console.error("[apresentacao] protoboard 3D indisponível:", e);
+          document.getElementById("por-dentro").hidden = true;
+        }
+      };
+      if ("IntersectionObserver" in window) {
+        const io = new IntersectionObserver(
+          (entradas) => {
+            if (entradas.some((e) => e.isIntersecting)) {
+              io.disconnect();
+              montar();
+            }
+          },
+          { rootMargin: "600px 0px" },
+        );
+        io.observe(alvo);
+      } else montar();
+    </script>
   </body>
 </html>

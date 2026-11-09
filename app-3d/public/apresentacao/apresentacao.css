@@ -319,6 +319,44 @@ h3 {
   }
 }
 
+/* ---------- por dentro: protoboard 3D (js/protoboard/) ---------- */
+/* título compacto em cima, montagem na largura toda */
+#por-dentro .miolo.duas {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 18px;
+}
+
+#por-dentro .miolo.duas > * {
+  flex: none;
+}
+
+#por-dentro .cabeca {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 6px 32px;
+}
+
+#por-dentro h2 {
+  font-size: clamp(22px, 2.4vw, 32px);
+}
+
+#por-dentro .lead {
+  font-size: 15px;
+  max-width: 460px;
+}
+
+#protoboard-3d {
+  width: 100%;
+  height: min(76vh, 720px);
+  min-height: 420px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
 /* ---------- fluxo do dado ---------- */
 .etapas {
   display: grid;

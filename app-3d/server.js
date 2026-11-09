@@ -110,12 +110,15 @@ if (process.env.RENDER && !SENHA) {
 app.get("/healthz", (req, res) => res.type("text").send("ok"));
 // sem login: a casca do app do celular (PWA: manifest, service worker e ícones, que o navegador busca sem
 // cookie), a tela /entrar com seu estilo e fundo, a página pública /apresentacao (texto e capturas, sem dados
-// ao vivo) e as fontes locais. Nada disso tem dados nem controla nada.
+// ao vivo), a protoboard 3D que ela mostra e as fontes locais. Nada disso tem dados nem controla nada.
 const ABERTOS = [
   /^\/painel\/(manifest\.webmanifest|sw\.js|icones\/\w[\w.-]*)$/,
   /^\/entrar\/[\w.-]+$/,
   /^\/apresentacao(\/([\w-]+\/)*[\w.-]*)?$/,
   /^\/vendor\/fonts(-var)?\//,
+  // protoboard 3D da seção "Por dentro" da /apresentacao: o módulo e o three.js que ele importa (só código)
+  /^\/js\/protoboard\/[\w.-]+\.js$/,
+  /^\/vendor\/three\//,
 ];
 instalarAuth(app, {
   usuario: USUARIO,
