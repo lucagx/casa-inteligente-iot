@@ -15,8 +15,9 @@
  *
  * SENSORES (.env)  : LDR e HC-SR04 saíram do protoboard. Por padrão o servidor não lê nem simula
  *                    V6/V10/V12 e a casa 3D esconde tudo deles. SENSORES=ldr,garagem religa.
- * PAINEL_SENHA     : com a variável definida, tudo (páginas, /api e o stream) pede usuário e senha
- *                    (Basic Auth; usuário em PAINEL_USUARIO, padrão "casa"). Sem ela fica aberto (dev).
+ * PAINEL_SENHA     : com a variável definida, tudo (páginas, /api e o stream) pede login na tela /entrar
+ *                    (usuário em PAINEL_USUARIO, padrão "casa"; cookie de sessão assinado, server/auth.js).
+ *                    Sem ela fica aberto (dev). SESSAO_SEGREDO (opcional) entra na chave do cookie.
  * DATABASE_URL     : Postgres do histórico (server/history.js). Sem ela, o histórico fica em memória.
  *                    Rotas GET /api/history e GET /api/events; HISTORICO_POLL_MS = consulta de fundo.
  * PRESENCA_POLL_MS : leitura rápida só do V11 (padrão 500 ms) enquanto há página aberta (B5); 0 desliga.
@@ -44,7 +45,7 @@
 require("dotenv").config({ quiet: true });
 const express = require("express");
 const path = require("path");
-const crypto = require("crypto");
+const { instalarAuth } = require("./server/auth");
 const { criarHistorico, RETENCAO_DIAS } = require("./server/history");
 
 const PORT = Number(process.env.PORT || 3000);
@@ -92,15 +93,12 @@ const ALARME_MS = 4000;
 const app = express();
 
 // ------------------------------------------------------------------
-// Senha do painel (Basic Auth) — o link público controla luz, porta e alarme
+// Login do painel (server/auth.js) — o link público controla luz, porta e alarme
 // ------------------------------------------------------------------
 const SENHA = process.env.PAINEL_SENHA || "";
 const USUARIO = process.env.PAINEL_USUARIO || "casa";
-const igual = (a, b) => {
-  const x = Buffer.from(String(a)),
-    y = Buffer.from(String(b));
-  return x.length === y.length && crypto.timingSafeEqual(x, y);
-};
+// no Render o HTTPS termina no proxy: confiar nele dá o IP real (limite de tentativas) e o cookie Secure
+if (process.env.RENDER) app.set("trust proxy", 1);
 // no Render (variável RENDER) o link é público: sem senha o servidor não sobe
 if (process.env.RENDER && !SENHA) {
   console.error(
@@ -110,31 +108,20 @@ if (process.env.RENDER && !SENHA) {
 }
 // /healthz fica aberto (sem dados) para o health check do Render e monitores
 app.get("/healthz", (req, res) => res.type("text").send("ok"));
-// casca do app do celular (PWA) também fica aberta: o navegador busca manifest, service worker e ícones
-// sem credenciais. Não tem dados nem controla nada — a página /painel/ e a /api continuam com senha.
-const PWA_ABERTO =
-  /^\/painel\/(manifest\.webmanifest|sw\.js|icones\/\w[\w.-]*)$/;
-if (SENHA) {
-  app.use((req, res, next) => {
-    if (PWA_ABERTO.test(req.path)) return next();
-    const [tipo, valor] = (req.headers.authorization || "").split(" ");
-    if (tipo === "Basic" && valor) {
-      const txt = Buffer.from(valor, "base64").toString();
-      const i = txt.indexOf(":");
-      if (
-        i >= 0 &&
-        igual(txt.slice(0, i), USUARIO) &&
-        igual(txt.slice(i + 1), SENHA)
-      )
-        return next();
-    }
-    res.set(
-      "WWW-Authenticate",
-      'Basic realm="Casa Inteligente", charset="UTF-8"',
-    );
-    res.status(401).send("Senha necessária.");
-  });
-}
+// sem login: a casca do app do celular (PWA: manifest, service worker e ícones, que o navegador busca sem
+// cookie), a tela /entrar com seu estilo e fundo, e as fontes locais. Nada disso tem dados nem controla nada.
+const ABERTOS = [
+  /^\/painel\/(manifest\.webmanifest|sw\.js|icones\/\w[\w.-]*)$/,
+  /^\/entrar\/[\w.-]+$/,
+  /^\/vendor\/fonts\//,
+];
+instalarAuth(app, {
+  usuario: USUARIO,
+  senha: SENHA,
+  segredo: process.env.SESSAO_SEGREDO,
+  pagina: path.join(__dirname, "public/entrar/index.html"),
+  abertos: ABERTOS,
+});
 
 app.use(express.json());
 // configuração lida pela casa 3D (mesma fonte do servidor: .env SENSORES)
@@ -162,7 +149,7 @@ app.get("/js/config.js", (req, res) => {
         : carros[0] || null,
   };
   res.send(
-    `// gerado pelo servidor a partir do .env (SENSORES) e da pasta public/modelos\nexport const SENSORES = ${JSON.stringify(SENSORES)};\nexport const MODELOS = ${JSON.stringify(MODELOS)};\n`,
+    `// gerado pelo servidor a partir do .env (SENSORES) e da pasta public/modelos\nexport const SENSORES = ${JSON.stringify(SENSORES)};\nexport const MODELOS = ${JSON.stringify(MODELOS)};\nexport const LOGIN = ${Boolean(SENHA)};\n`,
   );
 });
 app.use(express.static(path.join(__dirname, "public")));
@@ -969,12 +956,10 @@ app.post("/api/privacidade", async (req, res) => {
     if (retencaoDias !== undefined) {
       const d = Number(retencaoDias);
       if (!Number.isFinite(d) || d < 1 || d > RETENCAO_DIAS)
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            error: `Retenção entre 1 e ${RETENCAO_DIAS} dias.`,
-          });
+        return res.status(400).json({
+          ok: false,
+          error: `Retenção entre 1 e ${RETENCAO_DIAS} dias.`,
+        });
       await historico.setRetencao(d);
       privacidade.retencaoDias = historico.retencao;
       historico.evento(
@@ -1163,12 +1148,10 @@ if (MODE === "live" && process.env.CONSUMO_V15 === "1") {
 app.get("/api/history", async (req, res) => {
   const p = periodo(req.query);
   if (!p)
-    return res
-      .status(400)
-      .json({
-        ok: false,
-        error: "Período inválido: use desde/ate como 24h, 7d, data ISO ou ms.",
-      });
+    return res.status(400).json({
+      ok: false,
+      error: "Período inválido: use desde/ate como 24h, 7d, data ISO ou ms.",
+    });
   const pinos = (
     lista(req.query.pinos)?.map((x) => x.toUpperCase()) || PINS
   ).filter((x) => /^V\d{1,3}$/.test(x));
@@ -1182,12 +1165,10 @@ app.get("/api/history", async (req, res) => {
 app.get("/api/events", async (req, res) => {
   const p = periodo({ desde: "7d", ...req.query });
   if (!p)
-    return res
-      .status(400)
-      .json({
-        ok: false,
-        error: "Período inválido: use desde/ate como 24h, 7d, data ISO ou ms.",
-      });
+    return res.status(400).json({
+      ok: false,
+      error: "Período inválido: use desde/ate como 24h, 7d, data ISO ou ms.",
+    });
   const limite = Math.min(1000, Math.max(1, Number(req.query.limite) || 200));
   try {
     res.json(

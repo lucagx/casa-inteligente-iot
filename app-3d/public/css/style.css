@@ -669,9 +669,16 @@ body.ready .panel {
   border-radius: 10px;
 }
 
-.quality {
+/* rodapé do painel: Qualidade à esquerda, Sair (só com login ativo) à direita */
+.pfoot {
   margin-top: auto;
-  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.quality {
   border: 0;
   background: transparent;
   color: var(--faint);

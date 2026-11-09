@@ -41,7 +41,7 @@ e o servidor não lê nem simula V6/V10/V12. O código continua: `SENSORES=ldr,g
 | `PRESENCA_POLL_MS` | Leitura rápida só da presença (V11) com página aberta (padrão 500 ms, mínimo 300; `0` desliga). PIR na tela em < 1 s; custa 1 requisição ao Blynk a cada leitura |
 | `DEMO` | `true` força o modo demonstração |
 | `SENSORES` | Sensores opcionais presentes: `ldr`, `garagem` (vírgula). Vazio = nenhum |
-| `PAINEL_SENHA` / `PAINEL_USUARIO` | Senha do painel (Basic Auth, usuário padrão `casa`). Obrigatória antes de publicar: o link controla luz, porta e alarme. Vazia = aberto (dev). `/healthz` fica sempre aberto, sem dados, para o health check |
+| `PAINEL_SENHA` / `PAINEL_USUARIO` | Senha do painel: tela de login em `/entrar` com cookie de sessão assinado (usuário padrão `casa`; Basic Auth ainda aceito para scripts). Botão Sair na casa 3D e no celular. Obrigatória antes de publicar: o link controla luz, porta e alarme. Vazia = aberto (dev). `/healthz` fica sempre aberto, sem dados, para o health check |
 | `DATABASE_URL` | Postgres do histórico (Supabase/Neon). Vazio = memória. Ignorado no modo demonstração. Veja "Histórico" abaixo |
 | `HISTORICO_POLL_MS` | Consulta de fundo ao Blynk sem página aberta, para o histórico (padrão 60000; `0` desliga) |
 

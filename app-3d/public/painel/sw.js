@@ -1,8 +1,8 @@
 // Service worker do painel: guarda a casca (página, estilo, scripts, fontes, ícones) para abrir sem rede.
 // Nunca guarda /api — estado e comandos são sempre ao vivo.
 // A navegação só sai do cache quando o celular está sem internet; com rede quem responde é o servidor,
-// assim o pedido de senha (Basic Auth, PAINEL_SENHA) continua aparecendo normalmente.
-const CACHE = "painel-v7";
+// assim a tela de login (/entrar, PAINEL_SENHA) continua aparecendo normalmente.
+const CACHE = "painel-v8";
 const CASCA = [
   "/painel/",
   "/painel/painel.css",

@@ -29,7 +29,8 @@ Variáveis:
 | `NODE_VERSION`, `POLL_INTERVAL_MS`, `PAINEL_USUARIO` | `render.yaml` | `24`, `1200`, `casa` |
 | `BLYNK_TOKEN` | painel do Render | token do dispositivo (Blynk.Console → Devices → Device Info) |
 | `BLYNK_SERVER` | painel do Render | servidor da região, ex.: `ny3.blynk.cloud` |
-| `PAINEL_SENHA` | painel do Render | senha do painel (Basic Auth, usuário `casa`) |
+| `PAINEL_SENHA` | painel do Render | senha do painel (tela `/entrar`, usuário `casa`) |
+| `SESSAO_SEGREDO` | painel do Render (opcional) | entra na chave do cookie de sessão; trocar derruba todas as sessões |
 | `DEMO` | opcional | `true` publica em modo demonstração |
 | `SENSORES` | opcional | `ldr,garagem` religa os sensores opcionais (vazio = desligados) |
 
@@ -115,7 +116,7 @@ Na apresentação: abrir o link uns minutos antes para garantir que está acorda
   tempo, deixar um deles em modo demonstração (`DEMO=true`).
 - Só uma placa pode usar o token; vários servidores podem (API externa).
 - Segredos ficam só no painel do Render. Nunca colocar token ou senha no `render.yaml` nem no repositório (é público).
-- Trocar a senha: *Environment → PAINEL_SENHA → Save*; o Render reinicia o serviço.
+- Trocar a senha: *Environment → PAINEL_SENHA → Save*; o Render reinicia o serviço e todas as sessões abertas caem (todos entram de novo em `/entrar`).
 
 ## Pronto quando (H2)
 

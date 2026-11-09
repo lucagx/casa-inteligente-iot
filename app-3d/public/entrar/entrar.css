@@ -1,0 +1,206 @@
+/* Tela de login — mesmo visual da casa 3D (style.css): escuro, ciano, Unbounded + DM Sans + JetBrains Mono */
+:root {
+  --ink: #eaf1f8;
+  --muted: #a7b6c8;
+  --faint: #93a4b8;
+  --cyan: #5ee7ff;
+  --red: #ff8aa0;
+  --display: "Unbounded", "Segoe UI", system-ui, sans-serif;
+  --body: "DM Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background-color: #070b12;
+  /* casa à noite já desfocada no arquivo; o degradê escurece o lado do formulário */
+  background-image:
+    linear-gradient(90deg, rgba(7, 11, 18, 0.95) 0%, rgba(7, 11, 18, 0.8) 42%, rgba(7, 11, 18, 0.25) 100%),
+    url("/entrar/fundo.jpg");
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--body);
+}
+
+.entrar {
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: min(440px, 100%);
+  margin-left: clamp(16px, 8vw, 120px);
+  padding: 48px 16px 48px 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 28px;
+}
+
+.marca {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+
+h1 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(40px, 9vw, 56px);
+  line-height: 1.02;
+  letter-spacing: -0.01em;
+}
+
+.marca p {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.cartao {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 28px;
+  border-radius: 20px;
+  background: rgba(9, 14, 23, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.campo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.campo label {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.campo input {
+  width: 100%;
+  height: 48px;
+  padding: 0 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  font: 500 16px var(--body);
+}
+
+.campo input:focus {
+  outline: none;
+  border-color: rgba(94, 231, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(94, 231, 255, 0.15);
+}
+
+.senha {
+  position: relative;
+}
+
+.senha input {
+  padding-right: 56px;
+}
+
+.senha button {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.senha button[aria-pressed="true"] {
+  color: var(--cyan);
+}
+
+.lembrar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.lembrar input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--cyan);
+}
+
+.erro {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--red);
+}
+
+.botao {
+  height: 52px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--cyan);
+  color: #04121a;
+  font: 700 16px var(--body);
+  cursor: pointer;
+}
+
+.botao:hover {
+  background: #8ff0ff;
+}
+
+button:focus-visible,
+.lembrar input:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+@media (max-width: 560px) {
+  body {
+    background-image:
+      linear-gradient(180deg, rgba(7, 11, 18, 0.7) 0%, rgba(7, 11, 18, 0.92) 55%),
+      url("/entrar/fundo.jpg");
+    background-attachment: scroll;
+  }
+
+  .entrar {
+    margin: 0 auto;
+    padding: 40px 16px;
+  }
+
+  .cartao {
+    padding: 22px;
+  }
+}

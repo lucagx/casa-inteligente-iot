@@ -1,7 +1,7 @@
 // Painel do celular (/painel): estado ao vivo por SSE, atuadores, modo automático/manual e alarme — sem 3D.
 // Mesma regra do painel da casa 3D (js/ui.js): comando de atuador no modo automático passa antes para o manual.
 import { fmt } from "/js/format.js";
-import { SENSORES } from "/js/config.js";
+import { SENSORES, LOGIN } from "/js/config.js";
 import { criarHistorico } from "/painel/historico.js";
 import { criarConsumo } from "/painel/consumo.js";
 import { criarRotina } from "/painel/rotina.js";
@@ -581,6 +581,11 @@ function connect() {
 async function poll() {
   try {
     const r = await fetch("/api/state", { cache: "no-store" });
+    // sessão expirou (login): volta para a tela de login e depois para o painel
+    if (r.status === 401 && navigator.onLine) {
+      location.href = `/entrar?volta=${encodeURIComponent(location.pathname + location.hash)}`;
+      return;
+    }
     if (!r.ok) throw new Error(r.status);
     applyState(await r.json());
     // o EventSource desiste em erro HTTP (ex.: 401); com o servidor de volta, abre de novo
@@ -626,6 +631,9 @@ function abrirAba() {
 }
 addEventListener("hashchange", abrirAba);
 abrirAba();
+
+// Sair só aparece com login ativo (PAINEL_SENHA)
+$("#sair").hidden = !LOGIN;
 
 connect();
 render();
