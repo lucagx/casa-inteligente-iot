@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#070b12" />
+    <title>Protoboard isométrica · teste</title>
+    <link rel="icon" href="/painel/icones/icone.svg" type="image/svg+xml" />
+    <!-- mesmas fontes e CSS da /apresentacao (só leitura): a página reproduz a seção #por-dentro -->
+    <link rel="stylesheet" href="/vendor/fonts-var/archivo/wdth.css" />
+    <link rel="stylesheet" href="/vendor/fonts/ibm-plex-sans/400.css" />
+    <link rel="stylesheet" href="/vendor/fonts/ibm-plex-sans/500.css" />
+    <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/400.css" />
+    <link rel="stylesheet" href="/vendor/fonts/jetbrains-mono/600.css" />
+    <link rel="stylesheet" href="/apresentacao/apresentacao.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/build/three.module.js",
+          "three/addons/": "/vendor/three/examples/jsm/"
+        }
+      }
+    </script>
+    <style>
+      /* layout proposto para a #por-dentro da /apresentacao: título compacto em cima, montagem na largura toda */
+      #por-dentro .miolo.duas { flex-direction: column; align-items: stretch; gap: 18px; }
+      #por-dentro .miolo.duas > * { flex: none; }
+      #por-dentro .cabeca { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 6px 32px; }
+      #por-dentro h2 { font-size: clamp(22px, 2.4vw, 32px); }
+      #por-dentro .lead { font-size: 15px; max-width: 460px; }
+      #protoboard-3d { width: 100%; height: min(76vh, 720px); min-height: 420px;
+        border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.08); overflow: hidden; }
+      /* só desta página: ?cheio=1 ocupa a tela inteira */
+      body.cheio #por-dentro { padding: 0; }
+      body.cheio .miolo > div:first-child { display: none; }
+      body.cheio #protoboard-3d { position: fixed; inset: 0; border: 0; border-radius: 0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="secao" id="por-dentro">
+        <div class="miolo duas">
+          <div class="cabeca">
+            <div>
+              <p class="eyebrow c-casa">Por dentro da placa</p>
+              <h2>O circuito, peça por peça</h2>
+            </div>
+            <p class="lead">Passe o mouse numa peça para ver o pino, o datastream e o que ela faz na casa.</p>
+          </div>
+          <div id="protoboard-3d"></div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module">
+      import { montarProtoboard } from "/js/protoboard/index.js";
+
+      const qs = new URLSearchParams(location.search);
+      if (qs.get("cheio")) document.body.classList.add("cheio");
+      const api = montarProtoboard(document.getElementById("protoboard-3d"), {
+        destaque: qs.get("destaque"),
+        aoSelecionar: (id) => console.info("[protoboard] aoSelecionar:", id),
+      });
+      if (qs.get("desmontar")) api.desmontar(true);
+      window.__pb = api; // usado pelas capturas
+    </script>
+  </body>
+</html>
